@@ -12,6 +12,7 @@ import assemblyai as aai
 import librosa
 import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, status
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -29,8 +30,9 @@ app = FastAPI(
     version="0.3.0",
 )
 
-if STATIC_DIR.exists():
-    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+# Static assets are part of the application package and must be present at startup.
+# Mounting unconditionally ensures the Jinja `url_for('static', ...)` route always exists.
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
@@ -437,7 +439,7 @@ async def not_found_page(request: Request) -> HTMLResponse:
 
 
 @app.exception_handler(404)
-async def not_found_handler(request: Request, exc: HTTPException) -> HTMLResponse:
+async def not_found_handler(request: Request, exc: StarletteHTTPException) -> HTMLResponse:
     return templates.TemplateResponse(
         request=request,
         name="404.html",
