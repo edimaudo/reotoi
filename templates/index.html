@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="hero" aria-labelledby="hero-title">
+    <div class="hero__copy">
+        <p class="eyebrow">VOICE ART</p>
+        <h1 id="hero-title">Your voice becomes art.</h1>
+        <p class="hero__lede">
+            Speak naturally for up to 30 seconds. reotoi reads the character of your voice and turns it into a visual composition.
+        </p>
+        <div class="hero__actions">
+            <a class="button button--primary" href="/app">Create artwork</a>
+            <a class="button button--secondary" href="/gallery">Explore gallery</a>
+        </div>
+    </div>
+
+    <div class="hero__visual" aria-label="Illustration showing voice transformed into abstract visual art" role="img">
+        <div class="voice-wave voice-wave--one"></div>
+        <div class="voice-wave voice-wave--two"></div>
+        <div class="voice-orbit"></div>
+        <div class="voice-core"></div>
+    </div>
+</section>
+
+<section class="principles" aria-labelledby="how-title">
+    <div class="section-heading">
+        <p class="eyebrow">HOW IT WORKS</p>
+        <h2 id="how-title">The words are not the artwork.</h2>
+        <p>Your voice characteristics shape the visual result.</p>
+    </div>
+
+    <div class="principle-grid">
+        <article class="principle-card">
+            <span class="principle-card__number">01</span>
+            <h3>Speak</h3>
+            <p>Use the microphone and speak for up to 30 seconds.</p>
+        </article>
+        <article class="principle-card">
+            <span class="principle-card__number">02</span>
+            <h3>Analyze</h3>
+            <p>Pitch, energy, rhythm, variation and pauses become your Voice DNA.</p>
+        </article>
+        <article class="principle-card">
+            <span class="principle-card__number">03</span>
+            <h3>Create</h3>
+            <p>Your Voice DNA and chosen visual theme become an original composition.</p>
+        </article>
+    </div>
+</section>
+
+<section class="theme-callout" aria-labelledby="theme-title">
+    <div>
+        <p class="eyebrow">THEME + VOICE</p>
+        <h2 id="theme-title">Choose the visual vocabulary. Your voice supplies the character.</h2>
+    </div>
+    <a class="text-link" href="/app">Start creating <span aria-hidden="true">→</span></a>
+</section>
+{% endblock %}
