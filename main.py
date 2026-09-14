@@ -374,17 +374,12 @@ async def gallery_page(request: Request) -> HTMLResponse:
     )
 
 
-@app.get("/health")
-async def health() -> dict[str, str]:
-    return {"status": "ok", "service": "reotoi"}
-
-
 # ---------------------------------------------------------------------------
-# API routes
+# Artwork generation action
 # ---------------------------------------------------------------------------
 
 
-@app.post("/api/generate")
+@app.post("/generate")
 async def generate_voice_art(
     audio: Annotated[UploadFile, File(...)],
     theme: Annotated[str, Form()] = "surprise",
@@ -431,23 +426,59 @@ async def generate_voice_art(
         delete_temp_file(temp_path)
 
 
+@app.get("/404", response_class=HTMLResponse, include_in_schema=False)
+async def not_found_page(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request=request,
+        name="404.html",
+        context={"title": "Page not found"},
+        status_code=status.HTTP_404_NOT_FOUND,
+    )
+
+
+@app.exception_handler(404)
+async def not_found_handler(request: Request, exc: HTTPException) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request=request,
+        name="404.html",
+        context={"title": "Page not found", "requested_path": request.url.path},
+        status_code=status.HTTP_404_NOT_FOUND,
+    )
+
+
 @app.exception_handler(HTTPException)
 async def http_exception_handler(
     request: Request,
     exc: HTTPException,
-) -> JSONResponse:
-    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+) -> HTMLResponse | JSONResponse:
+    # Page requests receive a rendered HTML error instead of a JSON error blob.
+    # The /generate action is called by browser JavaScript, so validation/service
+    # errors remain JSON there for the frontend to display in context.
+    if request.url.path == "/generate":
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+    return templates.TemplateResponse(
+        request=request,
+        name="404.html" if exc.status_code == 404 else "500.html",
+        context={"title": "Page not found" if exc.status_code == 404 else "Something went wrong", "requested_path": request.url.path, "error_message": str(exc.detail)},
+        status_code=exc.status_code,
+    )
 
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(
     request: Request,
     exc: Exception,
-) -> JSONResponse:
+) -> HTMLResponse:
     logger.exception("Unhandled application error on %s", request.url.path, exc_info=exc)
-    return JSONResponse(
+    return templates.TemplateResponse(
+        request=request,
+        name="500.html",
+        context={
+            "title": "Something went wrong",
+            "requested_path": request.url.path,
+        },
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={"detail": "Something went wrong. Please try again later."},
     )
 
 
