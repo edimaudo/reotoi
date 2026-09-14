@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en" data-theme="light" data-font-size="medium">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="reotoi turns the characteristics of your voice into original visual art.">
+    <title>{{ title }} · reotoi</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', path='css/styles.css') }}">
+    {% block head %}{% endblock %}
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to main content</a>
+
+<header class="site-header">
+    <div class="site-header__inner">
+        <a class="brand" href="/" aria-label="reotoi home">reotoi</a>
+
+        <nav class="site-nav" aria-label="Primary navigation">
+            <a href="/app">Create</a>
+            <a href="/gallery">Gallery</a>
+        </nav>
+
+        <div class="site-controls" aria-label="Display controls">
+            <div class="control-group" aria-label="Text size">
+                <span class="control-label">Text</span>
+                <button type="button" class="control-button" data-font-size="small" aria-label="Small text size">A−</button>
+                <button type="button" class="control-button is-active" data-font-size="medium" aria-label="Medium text size">A</button>
+                <button type="button" class="control-button" data-font-size="large" aria-label="Large text size">A+</button>
+            </div>
+            <button type="button" class="theme-toggle" id="theme-toggle" aria-pressed="false">
+                <span aria-hidden="true" id="theme-icon">☾</span>
+                <span class="sr-only">Toggle dark mode</span>
+            </button>
+        </div>
+    </div>
+</header>
+
+<main id="main-content" tabindex="-1">
+    {% block content %}{% endblock %}
+</main>
+
+<footer class="site-footer">
+    <div class="site-footer__inner">
+        <p>reotoi · voice art</p>
+        <p>Your voice is the raw material.</p>
+    </div>
+</footer>
+
+<script>
+(function () {
+    const root = document.documentElement;
+    const storedTheme = localStorage.getItem('reotoi-theme');
+    const storedFont = localStorage.getItem('reotoi-font-size');
+
+    function applyTheme(theme) {
+        root.dataset.theme = theme;
+        const toggle = document.getElementById('theme-toggle');
+        const icon = document.getElementById('theme-icon');
+        if (toggle) toggle.setAttribute('aria-pressed', String(theme === 'dark'));
+        if (icon) icon.textContent = theme === 'dark' ? '☀' : '☾';
+        localStorage.setItem('reotoi-theme', theme);
+    }
+
+    function applyFontSize(size) {
+        root.dataset.fontSize = size;
+        document.querySelectorAll('[data-font-size]').forEach((button) => {
+            if (button.tagName === 'BUTTON') {
+                button.classList.toggle('is-active', button.dataset.fontSize === size);
+            }
+        });
+        localStorage.setItem('reotoi-font-size', size);
+    }
+
+    if (storedTheme === 'dark' || storedTheme === 'light') applyTheme(storedTheme);
+    if (storedFont === 'small' || storedFont === 'medium' || storedFont === 'large') applyFontSize(storedFont);
+
+    document.getElementById('theme-toggle')?.addEventListener('click', function () {
+        applyTheme(root.dataset.theme === 'dark' ? 'light' : 'dark');
+    });
+
+    document.querySelectorAll('.control-button[data-font-size]').forEach((button) => {
+        button.addEventListener('click', function () {
+            applyFontSize(button.dataset.fontSize);
+        });
+    });
+})();
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>
