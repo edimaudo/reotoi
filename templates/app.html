@@ -1,0 +1,371 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="creation-page" aria-labelledby="create-title">
+    <div class="section-heading section-heading--wide">
+        <p class="eyebrow">CREATE</p>
+        <h1 id="create-title">Speak. Shape. Create.</h1>
+        <p>Choose a theme, then let the character of your voice become the artwork.</p>
+    </div>
+
+    <div class="creation-grid">
+        <section class="creation-panel" aria-labelledby="input-title">
+            <div class="panel-header">
+                <div>
+                    <p class="eyebrow">01 · YOUR INPUT</p>
+                    <h2 id="input-title">Start with your voice</h2>
+                </div>
+                <span class="time-limit">Up to {{ max_recording_seconds }} seconds</span>
+            </div>
+
+            <fieldset class="theme-fieldset">
+                <legend>Choose a visual theme</legend>
+                <div class="theme-options">
+                    {% for theme in themes %}
+                    <label class="theme-option">
+                        <input type="radio" name="theme" value="{{ theme }}" {% if theme == 'abstract' %}checked{% endif %}>
+                        <span>{{ theme|replace('-', ' ')|title }}</span>
+                    </label>
+                    {% endfor %}
+                    <label class="theme-option">
+                        <input type="radio" name="theme" value="surprise">
+                        <span>Surprise me</span>
+                    </label>
+                </div>
+            </fieldset>
+
+            <div class="recorder" id="recorder">
+                <div class="record-visual" aria-hidden="true">
+                    <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+                </div>
+                <p class="recorder-status" id="recorder-status">Ready to record</p>
+                <p class="recorder-timer" id="recorder-timer">00:00</p>
+                <p class="recorder-help" id="recorder-help">Your browser will ask for microphone permission.</p>
+
+                <button type="button" class="record-button" id="record-button" aria-describedby="recorder-help recorder-status">
+                    <span class="record-button__icon" aria-hidden="true"></span>
+                    <span id="record-button-label">Start speaking</span>
+                </button>
+            </div>
+
+            <div class="upload-fallback">
+                <div class="divider"><span>or</span></div>
+                <p><strong>Microphone not working?</strong> Use an audio file instead.</p>
+                <label class="file-button button button--secondary" for="audio-file">Choose audio file</label>
+                <input id="audio-file" type="file" accept="audio/*" hidden>
+                <p class="file-name" id="file-name" aria-live="polite"></p>
+            </div>
+
+            <div class="form-actions">
+                <button type="button" class="button button--primary" id="generate-button" disabled>
+                    Generate artwork
+                </button>
+            </div>
+
+            <p class="form-error" id="form-error" role="alert" hidden></p>
+        </section>
+
+        <aside class="voice-dna-intro" aria-labelledby="dna-title">
+            <p class="eyebrow">WHAT WE READ</p>
+            <h2 id="dna-title">Voice DNA</h2>
+            <p>
+                Your recording is analyzed for characteristics of how you speak—not simply what you say.
+            </p>
+
+            <dl class="feature-list">
+                <div><dt>Pitch</dt><dd>Height and tone</dd></div>
+                <div><dt>Energy</dt><dd>Vocal intensity</dd></div>
+                <div><dt>Rhythm</dt><dd>Pattern and pulse</dd></div>
+                <div><dt>Variation</dt><dd>Change over time</dd></div>
+                <div><dt>Pause</dt><dd>Space between sounds</dd></div>
+            </dl>
+
+            <p class="fine-print">Your words may be transcribed for speech analysis, but the visual system is driven by voice characteristics.</p>
+        </aside>
+    </div>
+</section>
+
+<section class="result-section" id="result-section" aria-labelledby="result-title" hidden>
+    <div class="section-heading section-heading--wide">
+        <p class="eyebrow">02 · YOUR ARTWORK</p>
+        <h2 id="result-title">Your voice, translated.</h2>
+        <p id="result-message">The recording has been converted into visual parameters.</p>
+    </div>
+
+    <div class="result-grid">
+        <div class="artwork-frame" id="artwork-frame">
+            <div class="artwork-placeholder" id="artwork-placeholder">
+                <span>Artwork will appear here</span>
+            </div>
+            <img id="artwork-image" alt="Generated artwork" hidden>
+        </div>
+
+        <div class="result-data">
+            <div class="voice-dna-card">
+                <div class="panel-header">
+                    <div>
+                        <p class="eyebrow">VOICE DNA</p>
+                        <h3>What shaped this piece</h3>
+                    </div>
+                </div>
+                <div id="voice-dna-bars" class="dna-bars"></div>
+            </div>
+
+            <div class="result-meta">
+                <p><span>Theme</span><strong id="result-theme">—</strong></p>
+                <p><span>Input</span><strong id="result-input">—</strong></p>
+            </div>
+
+            <div class="result-actions">
+                <button type="button" class="button button--primary" id="save-button">Save to gallery</button>
+                <a class="button button--secondary is-disabled" id="download-button" aria-disabled="true">Download</a>
+            </div>
+            <p class="fine-print" id="save-status" aria-live="polite"></p>
+        </div>
+    </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    const maxSeconds = {{ max_recording_seconds|tojson }};
+    const recordButton = document.getElementById('record-button');
+    const recordButtonLabel = document.getElementById('record-button-label');
+    const recorderStatus = document.getElementById('recorder-status');
+    const recorderTimer = document.getElementById('recorder-timer');
+    const recorderHelp = document.getElementById('recorder-help');
+    const generateButton = document.getElementById('generate-button');
+    const audioFileInput = document.getElementById('audio-file');
+    const fileName = document.getElementById('file-name');
+    const formError = document.getElementById('form-error');
+    const resultSection = document.getElementById('result-section');
+    const resultMessage = document.getElementById('result-message');
+    const resultTheme = document.getElementById('result-theme');
+    const resultInput = document.getElementById('result-input');
+    const voiceDnaBars = document.getElementById('voice-dna-bars');
+    const artworkImage = document.getElementById('artwork-image');
+    const artworkPlaceholder = document.getElementById('artwork-placeholder');
+    const downloadButton = document.getElementById('download-button');
+    const saveButton = document.getElementById('save-button');
+    const saveStatus = document.getElementById('save-status');
+
+    let mediaRecorder = null;
+    let mediaStream = null;
+    let recordedChunks = [];
+    let recordingBlob = null;
+    let recordingTimer = null;
+    let elapsedSeconds = 0;
+    let selectedSource = null;
+    let latestResult = null;
+
+    function setError(message) {
+        formError.textContent = message || '';
+        formError.hidden = !message;
+    }
+
+    function formatTime(seconds) {
+        const minutes = String(Math.floor(seconds / 60)).padStart(2, '0');
+        const remainder = String(seconds % 60).padStart(2, '0');
+        return `${minutes}:${remainder}`;
+    }
+
+    function selectedTheme() {
+        return document.querySelector('input[name="theme"]:checked')?.value || 'surprise';
+    }
+
+    function updateGenerateButton() {
+        generateButton.disabled = !(recordingBlob || selectedSource);
+    }
+
+    function clearRecordingSelection() {
+        recordingBlob = null;
+        selectedSource = null;
+        fileName.textContent = '';
+        updateGenerateButton();
+    }
+
+    function stopTracks() {
+        if (mediaStream) {
+            mediaStream.getTracks().forEach((track) => track.stop());
+            mediaStream = null;
+        }
+    }
+
+    function stopTimer() {
+        if (recordingTimer) {
+            clearInterval(recordingTimer);
+            recordingTimer = null;
+        }
+    }
+
+    function resetRecorderVisual() {
+        stopTimer();
+        stopTracks();
+        recordButton.classList.remove('is-recording');
+        recordButtonLabel.textContent = 'Start speaking';
+        recorderTimer.textContent = '00:00';
+    }
+
+    function finishRecording() {
+        if (!mediaRecorder || mediaRecorder.state === 'inactive') return;
+        mediaRecorder.stop();
+        stopTimer();
+        recorderStatus.textContent = 'Recording ready';
+        recorderHelp.textContent = 'You can generate artwork from this recording.';
+        resetRecorderVisual();
+    }
+
+    async function startRecording() {
+        setError('');
+        clearRecordingSelection();
+
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
+            setError('Microphone recording is not supported by this browser. Use an audio file instead.');
+            recorderStatus.textContent = 'Microphone unavailable';
+            return;
+        }
+
+        try {
+            mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            mediaRecorder = new MediaRecorder(mediaStream);
+            recordedChunks = [];
+            elapsedSeconds = 0;
+
+            mediaRecorder.addEventListener('dataavailable', (event) => {
+                if (event.data && event.data.size > 0) recordedChunks.push(event.data);
+            });
+
+            mediaRecorder.addEventListener('stop', () => {
+                const mimeType = mediaRecorder.mimeType || 'audio/webm';
+                recordingBlob = new Blob(recordedChunks, { type: mimeType });
+                selectedSource = 'microphone';
+                updateGenerateButton();
+            });
+
+            mediaRecorder.start();
+            recordButton.classList.add('is-recording');
+            recordButtonLabel.textContent = 'Stop recording';
+            recorderStatus.textContent = 'Recording';
+            recorderHelp.textContent = 'Speak naturally. You have up to 30 seconds.';
+
+            recordingTimer = setInterval(() => {
+                elapsedSeconds += 1;
+                recorderTimer.textContent = formatTime(elapsedSeconds);
+                if (elapsedSeconds >= maxSeconds) finishRecording();
+            }, 1000);
+        } catch (error) {
+            loggerSafe('Microphone error', error);
+            setError('Microphone access was unavailable. Check your browser permission or use an audio file instead.');
+            recorderStatus.textContent = 'Microphone unavailable';
+            stopTracks();
+        }
+    }
+
+    function loggerSafe(message, error) {
+        if (window.console) console.warn(message, error);
+    }
+
+    recordButton.addEventListener('click', () => {
+        if (mediaRecorder && mediaRecorder.state === 'recording') finishRecording();
+        else startRecording();
+    });
+
+    audioFileInput.addEventListener('change', () => {
+        const file = audioFileInput.files?.[0];
+        if (!file) return;
+        setError('');
+        recordingBlob = null;
+        selectedSource = file;
+        fileName.textContent = file.name;
+        recorderStatus.textContent = 'Audio file selected';
+        recorderHelp.textContent = 'The file will be analyzed when you generate the artwork.';
+        updateGenerateButton();
+    });
+
+    async function generateArtwork() {
+        const source = recordingBlob || selectedSource;
+        if (!source) return;
+
+        generateButton.disabled = true;
+        saveButton.disabled = true;
+        setError('');
+        resultSection.hidden = true;
+        generateButton.textContent = 'Analyzing your voice…';
+
+        const formData = new FormData();
+        const file = source instanceof Blob
+            ? new File([source], 'reotoi-recording.webm', { type: source.type || 'audio/webm' })
+            : source;
+        formData.append('audio', file);
+        formData.append('theme', selectedTheme());
+        formData.append('input_source', source instanceof Blob ? 'microphone' : 'upload');
+
+        try {
+            const response = await fetch('/api/generate', { method: 'POST', body: formData });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.detail || 'Unable to generate artwork.');
+
+            latestResult = data;
+            renderResult(data);
+        } catch (error) {
+            setError(error.message || 'Something went wrong. Please try again later.');
+        } finally {
+            generateButton.disabled = false;
+            generateButton.textContent = 'Generate artwork';
+        }
+    }
+
+    function renderResult(data) {
+        resultSection.hidden = false;
+        resultMessage.textContent = data.message || 'Your recording has been converted into visual parameters.';
+        resultTheme.textContent = titleCase(data.theme);
+        resultInput.textContent = data.input_source === 'microphone' ? 'Microphone' : 'Audio file';
+
+        voiceDnaBars.innerHTML = '';
+        Object.entries(data.voice_dna || {}).forEach(([key, value]) => {
+            const row = document.createElement('div');
+            row.className = 'dna-row';
+            row.innerHTML = `
+                <div class="dna-row__label"><span>${titleCase(key)}</span><strong>${value}/10</strong></div>
+                <div class="dna-row__track" aria-hidden="true"><span style="width:${Math.max(0, Math.min(10, Number(value))) * 10}%"></span></div>
+            `;
+            voiceDnaBars.appendChild(row);
+        });
+
+        if (data.artwork_url) {
+            artworkImage.src = data.artwork_url;
+            artworkImage.hidden = false;
+            artworkPlaceholder.hidden = true;
+            downloadButton.href = data.artwork_url;
+            downloadButton.download = `reotoi-${data.artwork_id}.png`;
+            downloadButton.classList.remove('is-disabled');
+            downloadButton.setAttribute('aria-disabled', 'false');
+        } else {
+            artworkImage.hidden = true;
+            artworkPlaceholder.hidden = false;
+            downloadButton.removeAttribute('href');
+            downloadButton.classList.add('is-disabled');
+            downloadButton.setAttribute('aria-disabled', 'true');
+        }
+
+        saveButton.disabled = false;
+        saveStatus.textContent = data.artwork_url
+            ? ''
+            : 'Artwork rendering is not connected yet; the voice analysis result is ready.';
+        resultSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function titleCase(value) {
+        return String(value).replace(/[-_]/g, ' ').replace(/\b\w/g, (match) => match.toUpperCase());
+    }
+
+    generateButton.addEventListener('click', generateArtwork);
+
+    saveButton.addEventListener('click', () => {
+        if (!latestResult) return;
+        saveStatus.textContent = 'Gallery persistence will be connected to the gallery service.';
+    });
+})();
+</script>
+{% endblock %}
