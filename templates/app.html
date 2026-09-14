@@ -302,7 +302,7 @@
         formData.append('input_source', source instanceof Blob ? 'microphone' : 'upload');
 
         try {
-            const response = await fetch('/api/generate', { method: 'POST', body: formData });
+            const response = await fetch('/generate', { method: 'POST', body: formData });
             const data = await response.json();
             if (!response.ok) throw new Error(data.detail || 'Unable to generate artwork.');
 
