@@ -338,7 +338,7 @@ p { color: var(--muted); }
 .creation-grid,
 .result-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.45fr) minmax(17rem, .75fr);
+  /*grid-template-columns: minmax(0, 1.45fr) minmax(17rem, .75fr);*/
   gap: 1rem;
   align-items: start;
 }
