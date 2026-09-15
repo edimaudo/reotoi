@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="description" content="reotoi turns the characteristics of your voice into original visual art.">
-    <title>{{ title }} · reotoi</title>
+    <title>reotoi</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -23,12 +23,14 @@
             <a href="/gallery">Gallery</a>
         </nav> -->
 
-        {% if request.url.path != '/' %}
+        
         <nav class="site-nav" aria-label="Primary navigation">
-            <a href="/app">Create</a>
-            <a href="/gallery">Gallery</a>
+            {% if request.url.path != '/' %}
+                <a href="/app">Create</a>
+                <a href="/gallery">Gallery</a>
+            {% endif %}
         </nav>
-        {% endif %}
+        
 
         <div class="site-controls" aria-label="Display controls">
             <div class="control-group" aria-label="Text size">
