@@ -452,7 +452,7 @@ p { color: var(--muted); }
 .result-meta p:last-child { border-bottom: 0; }
 .result-meta strong { color: var(--text); }
 
-.gallery-empty { max-width: 48rem; margin-top: 4rem; padding: 4rem 2rem; text-align: center; }
+.gallery-empty { /*max-width: 48rem;*/ margin-top: 4rem; padding: 4rem 2rem; text-align: center; }
 .gallery-empty__mark { width: 5rem; aspect-ratio: 1; margin: 0 auto 2rem; border: 1px solid var(--line); border-radius: 50%; display: grid; place-items: center; }
 .gallery-empty__mark span { width: .32rem; height: 1.4rem; background: var(--text); border-radius: 999px; transform: rotate(45deg); }
 .gallery-empty__mark span:nth-child(2) { transform: rotate(-45deg); }
