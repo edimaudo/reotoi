@@ -6,16 +6,19 @@ import os
 import tempfile
 import uuid
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated
 
-import assemblyai as aai
-import librosa
-import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, status
-from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.responses import Response
+
+from services.art_generator import render_svg
+from services.assemblyai_service import analyze_speech
+from services.gallery_service import delete_artwork, list_gallery, save_artwork
+from services.voice_features import analyze_audio, calculate_voice_dna
 
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = BASE_DIR / "templates"
@@ -25,19 +28,14 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("reotoi")
 
 app = FastAPI(
-    title="reotoi · voice art",
-    description="Turn characteristics of a voice into unique visual artwork.",
-    version="0.3.0",
+    title="reotoi"
 )
 
-# Static assets are part of the application package and must be present at startup.
-# Mounting unconditionally ensures the Jinja `url_for('static', ...)` route always exists.
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
-
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 MAX_RECORDING_SECONDS = 30
-MAX_AUDIO_BYTES = 10 * 1024 * 1024
+MAX_AUDIO_BYTES = 4 * 1024 * 1024
 MIN_AUDIO_BYTES = 512
 ALLOWED_INPUT_SOURCES = {"microphone", "upload"}
 ALLOWED_THEMES = {
@@ -65,50 +63,35 @@ ALLOWED_AUDIO_TYPES = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Configuration and validation
-# ---------------------------------------------------------------------------
-
-
 def validate_theme(theme: str) -> str:
-    """Validate and normalize the selected artwork theme."""
-    normalized = theme.strip().lower()
+    """Validate and normalize the selected theme."""
+    normalized = (theme or "surprise").strip().lower()
     if normalized not in ALLOWED_THEMES:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Invalid theme.",
-        )
+        raise HTTPException(status_code=422, detail="Invalid artwork theme.")
     return normalized
 
 
 def validate_input_source(input_source: str) -> str:
-    """Validate whether the audio came from the microphone or an upload."""
-    normalized = input_source.strip().lower()
+    """Validate the browser-selected audio source label."""
+    normalized = (input_source or "microphone").strip().lower()
     if normalized not in ALLOWED_INPUT_SOURCES:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Invalid audio input source.",
-        )
+        raise HTTPException(status_code=422, detail="Invalid audio input source.")
     return normalized
 
 
-def validate_audio_metadata(file: UploadFile) -> None:
-    """Reject unsupported audio content types before writing to disk."""
-    content_type = (file.content_type or "").lower()
+def validate_audio_metadata(audio: UploadFile) -> None:
+    """Reject unsupported media types."""
+    content_type = (audio.content_type or "").lower()
     if content_type not in ALLOWED_AUDIO_TYPES:
         raise HTTPException(
-            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail=(
-                "Unsupported audio format. Please use a microphone recording "
-                "or a WAV, MP3, M4A, OGG, AAC, MP4, or WebM audio file."
-            ),
+            status_code=415,
+            detail="Unsupported audio format. Please use a microphone recording or a common audio file.",
         )
 
 
-def extension_for_audio(file: UploadFile) -> str:
-    """Return a safe temporary-file extension based on content type/name."""
-    content_type = (file.content_type or "").lower()
-    content_extensions = {
+def audio_suffix(audio: UploadFile) -> str:
+    """Return a safe temporary extension."""
+    by_type = {
         "audio/webm": ".webm",
         "audio/webm;codecs=opus": ".webm",
         "audio/wav": ".wav",
@@ -122,263 +105,99 @@ def extension_for_audio(file: UploadFile) -> str:
         "audio/opus": ".opus",
         "audio/aac": ".aac",
     }
-
-    if content_type in content_extensions:
-        return content_extensions[content_type]
-
-    if file.filename:
-        suffix = Path(file.filename).suffix.lower()
-        if suffix in {".webm", ".wav", ".mp3", ".m4a", ".mp4", ".ogg", ".opus", ".aac"}:
-            return suffix
-
-    return ".audio"
+    return by_type.get((audio.content_type or "").lower(), Path(audio.filename or "audio").suffix.lower() or ".audio")
 
 
-async def save_upload_to_temp(file: UploadFile) -> tuple[str, int]:
-    """Stream an uploaded audio file to a temporary path with size limits."""
-    validate_audio_metadata(file)
-
-    total_bytes = 0
-    suffix = extension_for_audio(file)
-    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-    temp_path = temp_file.name
+async def save_audio_temporarily(audio: UploadFile) -> tuple[str, int]:
+    """Stream audio to a temporary file while enforcing the Vercel-safe size limit."""
+    validate_audio_metadata(audio)
+    total = 0
+    handle = tempfile.NamedTemporaryFile(delete=False, suffix=audio_suffix(audio))
+    temp_path = handle.name
 
     try:
-        with temp_file:
-            while True:
-                chunk = await file.read(1024 * 1024)
-                if not chunk:
-                    break
-
-                total_bytes += len(chunk)
-                if total_bytes > MAX_AUDIO_BYTES:
+        with handle:
+            while chunk := await audio.read(1024 * 512):
+                total += len(chunk)
+                if total > MAX_AUDIO_BYTES:
                     raise HTTPException(
-                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                        detail="Audio must be 10 MB or smaller.",
+                        status_code=413,
+                        detail="Audio must be 4 MB or smaller for this web deployment.",
                     )
-
-                temp_file.write(chunk)
-
-        if total_bytes < MIN_AUDIO_BYTES:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="The audio recording is empty or too short.",
-            )
-
-        return temp_path, total_bytes
+                handle.write(chunk)
+        if total < MIN_AUDIO_BYTES:
+            raise HTTPException(status_code=400, detail="The audio recording is empty or too short.")
+        return temp_path, total
     except Exception:
-        delete_temp_file(temp_path)
+        try:
+            os.unlink(temp_path)
+        except OSError:
+            pass
         raise
 
 
-def delete_temp_file(file_path: str) -> None:
-    """Best-effort cleanup for temporary uploaded audio."""
+def cleanup_temp_file(file_path: str) -> None:
+    """Remove temporary audio after processing."""
     try:
         os.unlink(file_path)
     except OSError:
         pass
 
 
-# ---------------------------------------------------------------------------
-# Voice analysis
-# ---------------------------------------------------------------------------
+def get_gallery_id(request: Request) -> str:
+    """Get the anonymous browser gallery identifier or create one."""
+    return request.cookies.get("reotoi_gallery") or uuid.uuid4().hex
 
 
-def safe_normalize(value: float, low: float, high: float) -> float:
-    """Normalize a value to the 0–1 range without division errors."""
-    if high <= low:
-        return 0.0
-    return float(np.clip((value - low) / (high - low), 0.0, 1.0))
-
-
-def calculate_voice_dna(features: dict[str, float]) -> dict[str, int]:
-    """Convert normalized internal features to 0–10 display values."""
-    return {
-        key: int(round(float(np.clip(value, 0.0, 1.0)) * 10))
-        for key, value in features.items()
-        if key in {"pitch", "energy", "rhythm", "variation", "pause"}
-    }
-
-
-def analyze_audio(file_path: str) -> dict[str, float]:
-    """Extract deterministic acoustic characteristics from the recording."""
-    try:
-        audio, sample_rate = librosa.load(file_path, sr=None, mono=True)
-    except Exception as exc:
-        logger.exception("Unable to decode audio", exc_info=exc)
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="The audio could not be decoded. Please try another recording or file.",
-        ) from exc
-
-    if audio.size == 0:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="The audio recording is empty.",
-        )
-
-    duration = float(librosa.get_duration(y=audio, sr=sample_rate))
-    if duration > MAX_RECORDING_SECONDS + 0.25:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Audio must be {MAX_RECORDING_SECONDS} seconds or less.",
-        )
-
-    rms = librosa.feature.rms(y=audio)[0]
-    rms_mean = float(rms.mean()) if rms.size else 0.0
-
-    try:
-        f0 = librosa.yin(audio, fmin=70, fmax=400, sr=sample_rate)
-        voiced_f0 = f0[np.isfinite(f0) & (f0 >= 70) & (f0 <= 400)]
-    except Exception:
-        voiced_f0 = np.array([], dtype=float)
-
-    pitch_median = float(np.median(voiced_f0)) if voiced_f0.size else 150.0
-    pitch_spread = float(np.std(voiced_f0)) if voiced_f0.size else 0.0
-
-    onset_env = librosa.onset.onset_strength(y=audio, sr=sample_rate)
-    onset_mean = float(onset_env.mean()) if onset_env.size else 0.0
-
-    spectral_centroid = librosa.feature.spectral_centroid(y=audio, sr=sample_rate)[0]
-    centroid_mean = float(spectral_centroid.mean()) if spectral_centroid.size else 0.0
-
-    rms_max = float(rms.max()) if rms.size else 0.0
-    threshold = max(rms_max * 0.20, 1e-7)
-    pause_ratio = float((rms < threshold).mean()) if rms.size else 0.0
-
-    return {
-        "pitch": safe_normalize(pitch_median, 80.0, 300.0),
-        "energy": safe_normalize(rms_mean, 0.005, 0.15),
-        "rhythm": safe_normalize(onset_mean, 0.1, 3.0),
-        "variation": safe_normalize(pitch_spread, 5.0, 80.0),
-        "pause": float(np.clip(pause_ratio, 0.0, 1.0)),
-        "spectral": safe_normalize(centroid_mean, 500.0, 4000.0),
-        "speech_rate": safe_normalize(onset_mean, 0.1, 4.0),
-        "duration": min(duration, MAX_RECORDING_SECONDS),
-    }
-
-
-# ---------------------------------------------------------------------------
-# AssemblyAI integration
-# ---------------------------------------------------------------------------
-
-
-def get_assemblyai_api_key() -> str:
-    """Read the AssemblyAI key from the deployment environment."""
-    api_key = os.getenv("ASSEMBLYAI_API_KEY")
-    if not api_key:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Voice analysis service is not available right now. Please try again later.",
-        )
-    return api_key
-
-
-def analyze_speech_with_assemblyai(file_path: str) -> dict[str, Any]:
-    """Use AssemblyAI for speech-level context without replacing acoustic analysis."""
-    aai.settings.api_key = get_assemblyai_api_key()
-
-    try:
-        transcriber = aai.Transcriber()
-        transcript = transcriber.transcribe(file_path)
-    except Exception as exc:
-        logger.exception("AssemblyAI request failed", exc_info=exc)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Voice analysis service is not available right now. Please try again later.",
-        ) from exc
-
-    if transcript.status == aai.TranscriptStatus.error:
-        logger.error("AssemblyAI transcription failed: %s", transcript.error)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Voice analysis service could not process the recording. Please try again.",
-        )
-
-    return {
-        "transcript": getattr(transcript, "text", None),
-        "duration_seconds": float(getattr(transcript, "audio_duration", None) or 0.0),
-    }
-
-
-# ---------------------------------------------------------------------------
-# Artwork generation boundary
-# ---------------------------------------------------------------------------
-
-
-def build_visual_parameters(features: dict[str, float], theme: str) -> dict[str, Any]:
-    """Create a deterministic intermediate representation for the art engine."""
-    return {
-        "theme": theme,
-        "voice": {
-            "pitch": features["pitch"],
-            "energy": features["energy"],
-            "rhythm": features["rhythm"],
-            "variation": features["variation"],
-            "pause": features["pause"],
-            "spectral": features["spectral"],
-            "speech_rate": features["speech_rate"],
-            "duration": features["duration"],
-        },
-        "mapping_version": "v1",
-    }
-
-
-def generate_artwork(features: dict[str, float], theme: str) -> dict[str, Any]:
-    """Generate the current deterministic artwork payload.
-
-    This is the seam where the real SVG/procedural/image-generation engine can
-    be inserted later without changing the API or recording workflow.
-    """
-    artwork_id = str(uuid.uuid4())
-    visual_parameters = build_visual_parameters(features, theme)
-
-    return {
-        "artwork_id": artwork_id,
-        "visual_parameters": visual_parameters,
-        "artwork_url": None,
-    }
-
-
-# ---------------------------------------------------------------------------
-# HTML routes
-# ---------------------------------------------------------------------------
+def attach_gallery_cookie(request: Request, response: Response, gallery_id: str | None = None) -> Response:
+    """Ensure the anonymous gallery identifier survives browser navigation."""
+    if request.cookies.get("reotoi_gallery"):
+        return response
+    response.set_cookie(
+        key="reotoi_gallery",
+        value=gallery_id or uuid.uuid4().hex,
+        max_age=60 * 60 * 24 * 365,
+        httponly=True,
+        samesite="lax",
+        secure=bool(os.getenv("VERCEL")),
+    )
+    return response
 
 
 @app.get("/", response_class=HTMLResponse)
 async def landing_page(request: Request) -> HTMLResponse:
-    return templates.TemplateResponse(
+    response = templates.TemplateResponse(
         request=request,
         name="index.html",
         context={"title": "reotoi · voice art"},
     )
+    return attach_gallery_cookie(request, response)
 
 
 @app.get("/app", response_class=HTMLResponse)
 async def app_page(request: Request) -> HTMLResponse:
-    return templates.TemplateResponse(
+    response = templates.TemplateResponse(
         request=request,
         name="app.html",
         context={
             "title": "Create artwork",
             "max_recording_seconds": MAX_RECORDING_SECONDS,
-            "themes": sorted(ALLOWED_THEMES - {"surprise"}),
+            "themes": ["abstract", "nature", "cosmos", "architecture", "organic", "geometric"],
         },
     )
+    return attach_gallery_cookie(request, response)
 
 
 @app.get("/gallery", response_class=HTMLResponse)
 async def gallery_page(request: Request) -> HTMLResponse:
-    return templates.TemplateResponse(
+    gallery_id = get_gallery_id(request)
+    items = await list_gallery(gallery_id)
+    response = templates.TemplateResponse(
         request=request,
         name="gallery.html",
-        context={"title": "Gallery"},
+        context={"title": "Gallery", "items": items},
     )
-
-
-# ---------------------------------------------------------------------------
-# Artwork generation action
-# ---------------------------------------------------------------------------
+    return attach_gallery_cookie(request, response, gallery_id)
 
 
 @app.post("/generate")
@@ -386,107 +205,155 @@ async def generate_voice_art(
     audio: Annotated[UploadFile, File(...)],
     theme: Annotated[str, Form()] = "surprise",
     input_source: Annotated[str, Form()] = "microphone",
-) -> dict[str, Any]:
-    """Convert a microphone recording or fallback audio upload into art data."""
-    theme = validate_theme(theme)
-    input_source = validate_input_source(input_source)
-    temp_path, total_bytes = await save_upload_to_temp(audio)
+) -> JSONResponse:
+    """Process submitted voice audio and return the generated artwork."""
+    validated_theme = validate_theme(theme)
+    validated_source = validate_input_source(input_source)
+    temp_path, byte_count = await save_audio_temporarily(audio)
 
     try:
         acoustic_features = analyze_audio(temp_path)
-        speech_analysis = analyze_speech_with_assemblyai(temp_path)
+        speech_analysis = analyze_speech(temp_path)
+        duration = speech_analysis.get("duration_seconds") or 0.0
+        if duration > MAX_RECORDING_SECONDS + 0.25:
+            raise HTTPException(status_code=422, detail=f"Audio must be {MAX_RECORDING_SECONDS} seconds or less.")
 
-        assembly_duration = speech_analysis.get("duration_seconds") or 0.0
-        if assembly_duration > MAX_RECORDING_SECONDS + 0.25:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Audio must be {MAX_RECORDING_SECONDS} seconds or less.",
-            )
-
-        artwork = generate_artwork(acoustic_features, theme)
+        artwork_id, artwork_url, visual_parameters = render_svg(
+            acoustic_features,
+            validated_theme,
+        )
+        voice_dna = calculate_voice_dna(acoustic_features)
+        resolved_theme = visual_parameters["theme"]
 
         logger.info(
-            "Generated artwork input=%s theme=%s bytes=%s artwork_id=%s",
-            input_source,
-            theme,
-            total_bytes,
-            artwork["artwork_id"],
+            "Created artwork id=%s source=%s theme=%s bytes=%s",
+            artwork_id,
+            validated_source,
+            resolved_theme,
+            byte_count,
         )
 
-        return {
-            "success": True,
-            "message": "Your voice has been translated into visual parameters.",
-            "artwork_id": artwork["artwork_id"],
-            "theme": theme,
-            "input_source": input_source,
-            "voice_dna": calculate_voice_dna(acoustic_features),
-            "transcript": speech_analysis.get("transcript"),
-            "artwork_url": artwork.get("artwork_url"),
-            "visual_parameters": artwork["visual_parameters"],
-        }
+        return JSONResponse(
+            content={
+                "success": True,
+                "message": "Your voice has been translated into visual parameters.",
+                "artwork_id": artwork_id,
+                "theme": resolved_theme,
+                "input_source": validated_source,
+                "voice_dna": voice_dna,
+                "transcript": speech_analysis.get("transcript"),
+                "artwork_url": artwork_url,
+                "visual_parameters": visual_parameters,
+            }
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except RuntimeError as exc:
+        logger.exception("Service failure while generating artwork")
+        raise HTTPException(status_code=503, detail="Voice analysis service is unavailable right now. Please try again later.") from exc
+    except Exception as exc:
+        logger.exception("Unexpected generation failure")
+        raise HTTPException(status_code=500, detail="reotoi could not create the artwork. Please try again later.") from exc
     finally:
-        delete_temp_file(temp_path)
+        cleanup_temp_file(temp_path)
+
+
+@app.post("/gallery/save")
+async def save_gallery_artwork(
+    request: Request,
+    artwork_id: Annotated[str, Form(...)],
+    artwork_url: Annotated[str, Form(...)],
+    theme: Annotated[str, Form(...)],
+    voice_dna: Annotated[str, Form(...)],
+) -> JSONResponse:
+    """Save the most recently generated artwork to the current browser gallery."""
+    try:
+        dna = json.loads(voice_dna)
+        if not isinstance(dna, dict):
+            raise ValueError("Invalid Voice DNA.")
+        item = await save_artwork(
+            get_gallery_id(request),
+            artwork_id,
+            artwork_url,
+            validate_theme(theme),
+            dna,
+        )
+        return JSONResponse({"success": True, "item": item})
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Gallery save failed")
+        raise HTTPException(status_code=503, detail="Gallery storage is unavailable right now. Please try again later.") from exc
+
+
+@app.post("/gallery/delete/{artwork_id}")
+async def remove_gallery_artwork(request: Request, artwork_id: str) -> JSONResponse:
+    """Delete artwork from the current browser gallery."""
+    try:
+        deleted = await delete_artwork(get_gallery_id(request), artwork_id)
+        return JSONResponse({"success": deleted})
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Gallery delete failed")
+        raise HTTPException(status_code=503, detail="Gallery storage is unavailable right now. Please try again later.") from exc
 
 
 @app.get("/404", response_class=HTMLResponse, include_in_schema=False)
-async def not_found_page(request: Request) -> HTMLResponse:
-    return templates.TemplateResponse(
-        request=request,
-        name="404.html",
-        context={"title": "Page not found"},
-        status_code=status.HTTP_404_NOT_FOUND,
-    )
-
-
-@app.exception_handler(404)
-async def not_found_handler(request: Request, exc: StarletteHTTPException) -> HTMLResponse:
+async def explicit_not_found_page(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
         request=request,
         name="404.html",
         context={"title": "Page not found", "requested_path": request.url.path},
-        status_code=status.HTTP_404_NOT_FOUND,
+        status_code=404,
     )
 
 
-@app.exception_handler(HTTPException)
-async def http_exception_handler(
-    request: Request,
-    exc: HTTPException,
-) -> HTMLResponse | JSONResponse:
-    # Page requests receive a rendered HTML error instead of a JSON error blob.
-    # The /generate action is called by browser JavaScript, so validation/service
-    # errors remain JSON there for the frontend to display in context.
-    if request.url.path == "/generate":
-        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> Response:
+    """Render browser-facing errors as HTML, except /generate and action routes."""
+    if request.url.path.startswith("/generate") or request.url.path.startswith("/gallery/"):
+        return JSONResponse(status_code=exc.status_code, content={"detail": str(exc.detail)})
 
-    return templates.TemplateResponse(
-        request=request,
-        name="404.html" if exc.status_code == 404 else "500.html",
-        context={"title": "Page not found" if exc.status_code == 404 else "Something went wrong", "requested_path": request.url.path, "error_message": str(exc.detail)},
-        status_code=exc.status_code,
-    )
+    if exc.status_code == 404:
+        return templates.TemplateResponse(
+            request=request,
+            name="404.html",
+            context={"title": "Page not found", "requested_path": request.url.path},
+            status_code=404,
+        )
 
-
-@app.exception_handler(Exception)
-async def unhandled_exception_handler(
-    request: Request,
-    exc: Exception,
-) -> HTMLResponse:
-    logger.exception("Unhandled application error on %s", request.url.path, exc_info=exc)
     return templates.TemplateResponse(
         request=request,
         name="500.html",
         context={
             "title": "Something went wrong",
             "requested_path": request.url.path,
+            "error_message": str(exc.detail),
         },
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        status_code=exc.status_code,
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> HTMLResponse:
+    logger.exception("Unhandled application error at %s", request.url.path, exc_info=exc)
+    return templates.TemplateResponse(
+        request=request,
+        name="500.html",
+        context={"title": "Something went wrong", "requested_path": request.url.path},
+        status_code=500,
     )
 
 
 if __name__ == "__main__":
     import uvicorn
 
-    host = os.getenv("HOST", "127.0.0.1")
-    port = int(os.getenv("PORT", "8000"))
-    uvicorn.run("main:app", host=host, port=port, reload=True)
+    uvicorn.run(
+        "main:app",
+        host=os.getenv("HOST", "127.0.0.1"),
+        port=int(os.getenv("PORT", "8000")),
+        reload=True,
+    )
