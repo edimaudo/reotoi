@@ -28,7 +28,9 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("reotoi")
 
 app = FastAPI(
-    title="reotoi"
+    title="reotoi · voice art",
+    description="Turn characteristics of a voice into unique visual artwork.",
+    version="1.0.0",
 )
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -49,7 +51,6 @@ ALLOWED_THEMES = {
 }
 ALLOWED_AUDIO_TYPES = {
     "audio/webm",
-    "audio/webm;codecs=opus",
     "audio/wav",
     "audio/wave",
     "audio/x-wav",
@@ -57,6 +58,7 @@ ALLOWED_AUDIO_TYPES = {
     "audio/mp3",
     "audio/mp4",
     "audio/m4a",
+    "audio/x-m4a",
     "audio/ogg",
     "audio/opus",
     "audio/aac",
@@ -79,9 +81,14 @@ def validate_input_source(input_source: str) -> str:
     return normalized
 
 
+def normalized_content_type(audio: UploadFile) -> str:
+    """Return the MIME type without optional parameters such as codecs."""
+    return (audio.content_type or "").lower().split(";", 1)[0].strip()
+
+
 def validate_audio_metadata(audio: UploadFile) -> None:
-    """Reject unsupported media types."""
-    content_type = (audio.content_type or "").lower()
+    """Reject unsupported media types while accepting browser codec parameters."""
+    content_type = normalized_content_type(audio)
     if content_type not in ALLOWED_AUDIO_TYPES:
         raise HTTPException(
             status_code=415,
@@ -90,10 +97,9 @@ def validate_audio_metadata(audio: UploadFile) -> None:
 
 
 def audio_suffix(audio: UploadFile) -> str:
-    """Return a safe temporary extension."""
+    """Return an extension that matches the normalized content type."""
     by_type = {
         "audio/webm": ".webm",
-        "audio/webm;codecs=opus": ".webm",
         "audio/wav": ".wav",
         "audio/wave": ".wav",
         "audio/x-wav": ".wav",
@@ -101,11 +107,15 @@ def audio_suffix(audio: UploadFile) -> str:
         "audio/mp3": ".mp3",
         "audio/mp4": ".m4a",
         "audio/m4a": ".m4a",
+        "audio/x-m4a": ".m4a",
         "audio/ogg": ".ogg",
         "audio/opus": ".opus",
         "audio/aac": ".aac",
     }
-    return by_type.get((audio.content_type or "").lower(), Path(audio.filename or "audio").suffix.lower() or ".audio")
+    content_type = normalized_content_type(audio)
+    if content_type in by_type:
+        return by_type[content_type]
+    return Path(audio.filename or "audio").suffix.lower() or ".audio"
 
 
 async def save_audio_temporarily(audio: UploadFile) -> tuple[str, int]:
