@@ -40,6 +40,7 @@ MAX_RECORDING_SECONDS = 30
 MAX_AUDIO_BYTES = 4 * 1024 * 1024
 MIN_AUDIO_BYTES = 512
 ALLOWED_INPUT_SOURCES = {"microphone", "upload"}
+
 ALLOWED_THEMES = {
     "abstract",
     "nature",
@@ -49,20 +50,11 @@ ALLOWED_THEMES = {
     "geometric",
     "surprise",
 }
-ALLOWED_AUDIO_TYPES = {
-    "audio/webm",
-    "audio/wav",
-    "audio/wave",
-    "audio/x-wav",
-    "audio/mpeg",
-    "audio/mp3",
-    "audio/mp4",
-    "audio/m4a",
-    "audio/x-m4a",
-    "audio/ogg",
-    "audio/opus",
-    "audio/aac",
-}
+
+# The browser normalizes both microphone recordings and fallback uploads to
+# 16-bit PCM WAV before submitting them. This keeps the Vercel Python runtime
+# independent of browser-specific codecs such as M4A/AAC or WebM/Opus.
+REQUIRED_AUDIO_TYPE = "audio/wav"
 
 
 def validate_theme(theme: str) -> str:
@@ -74,7 +66,7 @@ def validate_theme(theme: str) -> str:
 
 
 def validate_input_source(input_source: str) -> str:
-    """Validate the browser-selected audio source label."""
+    """Validate the explicit source selected by the browser."""
     normalized = (input_source or "microphone").strip().lower()
     if normalized not in ALLOWED_INPUT_SOURCES:
         raise HTTPException(status_code=422, detail="Invalid audio input source.")
@@ -86,41 +78,42 @@ def normalized_content_type(audio: UploadFile) -> str:
     return (audio.content_type or "").lower().split(";", 1)[0].strip()
 
 
-def validate_audio_metadata(audio: UploadFile) -> None:
-    """Reject unsupported media types while accepting browser codec parameters."""
+def validate_audio_metadata(audio: UploadFile, input_source: str) -> None:
+    """Require the normalized WAV contract for both supported input paths."""
     content_type = normalized_content_type(audio)
-    if content_type not in ALLOWED_AUDIO_TYPES:
-        raise HTTPException(
-            status_code=415,
-            detail="Unsupported audio format. Please use a microphone recording or a common audio file.",
+    suffix = Path(audio.filename or "").suffix.lower()
+
+    if content_type != REQUIRED_AUDIO_TYPE and not (content_type == "audio/wave"):
+        message = (
+            "reotoi could not read this recording. "
+            "Please record with the microphone or choose a WAV audio file."
         )
+        if input_source == "upload":
+            message = (
+                "reotoi could not read this audio file. "
+                "Please choose a WAV audio file."
+            )
+        raise HTTPException(status_code=415, detail=message)
+
+    if suffix and suffix not in {".wav", ".wave"}:
+        message = (
+            "The audio content is WAV, but the filename does not match the format. "
+            "Please try recording again or choose a WAV file."
+        )
+        raise HTTPException(status_code=415, detail=message)
 
 
-def audio_suffix(audio: UploadFile) -> str:
-    """Return an extension that matches the normalized content type."""
-    by_type = {
-        "audio/webm": ".webm",
-        "audio/wav": ".wav",
-        "audio/wave": ".wav",
-        "audio/x-wav": ".wav",
-        "audio/mpeg": ".mp3",
-        "audio/mp3": ".mp3",
-        "audio/mp4": ".m4a",
-        "audio/m4a": ".m4a",
-        "audio/x-m4a": ".m4a",
-        "audio/ogg": ".ogg",
-        "audio/opus": ".opus",
-        "audio/aac": ".aac",
-    }
-    content_type = normalized_content_type(audio)
-    if content_type in by_type:
-        return by_type[content_type]
-    return Path(audio.filename or "audio").suffix.lower() or ".audio"
+def audio_suffix(_: UploadFile) -> str:
+    """All normalized browser submissions are stored as WAV."""
+    return ".wav"
 
 
-async def save_audio_temporarily(audio: UploadFile) -> tuple[str, int]:
-    """Stream audio to a temporary file while enforcing the Vercel-safe size limit."""
-    validate_audio_metadata(audio)
+async def save_audio_temporarily(
+    audio: UploadFile,
+    input_source: str,
+) -> tuple[str, int]:
+    """Stream normalized WAV audio to a temporary file with size protection."""
+    validate_audio_metadata(audio, input_source)
     total = 0
     handle = tempfile.NamedTemporaryFile(delete=False, suffix=audio_suffix(audio))
     temp_path = handle.name
@@ -132,7 +125,7 @@ async def save_audio_temporarily(audio: UploadFile) -> tuple[str, int]:
                 if total > MAX_AUDIO_BYTES:
                     raise HTTPException(
                         status_code=413,
-                        detail="Audio must be 4 MB or smaller for this web deployment.",
+                        detail="The normalized audio must be 4 MB or smaller for this web deployment.",
                     )
                 handle.write(chunk)
         if total < MIN_AUDIO_BYTES:
@@ -219,7 +212,7 @@ async def generate_voice_art(
     """Process submitted voice audio and return the generated artwork."""
     validated_theme = validate_theme(theme)
     validated_source = validate_input_source(input_source)
-    temp_path, byte_count = await save_audio_temporarily(audio)
+    temp_path, byte_count = await save_audio_temporarily(audio, validated_source)
 
     try:
         acoustic_features = analyze_audio(temp_path)
