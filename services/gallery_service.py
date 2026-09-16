@@ -6,14 +6,15 @@ saved artwork is not tied to an ephemeral function filesystem.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import unquote
 
-from vercel.blob import AsyncBlobClient, delete as blob_delete, list_objects
+import httpx
+
+from vercel.blob import AsyncBlobClient
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 LOCAL_GALLERY_DIR = BASE_DIR / "data" / "gallery"
@@ -67,24 +68,24 @@ async def save_artwork(
     item = _metadata(artwork_id, gallery_id, theme, voice_dna)
 
     if use_vercel_blob():
-        client = AsyncBlobClient()
         svg_bytes = _decode_svg_from_data_uri(artwork_url)
         pathname = f"gallery/{gallery_id}/{artwork_id}.svg"
-        blob = await client.put(
-            pathname,
-            svg_bytes,
-            access="public",
-            content_type="image/svg+xml",
-            add_random_suffix=False,
-        )
-        metadata_blob = await client.put(
-            f"gallery/{gallery_id}/{artwork_id}.json",
-            json.dumps(item).encode("utf-8"),
-            access="public",
-            content_type="application/json",
-            add_random_suffix=False,
-        )
-        item.update({"artwork_url": blob.url, "metadata_url": metadata_blob.url})
+        async with AsyncBlobClient() as client:
+            blob = await client.put(
+                pathname,
+                svg_bytes,
+                access="public",
+                content_type="image/svg+xml",
+                add_random_suffix=False,
+            )
+            metadata_blob = await client.put(
+                f"gallery/{gallery_id}/{artwork_id}.json",
+                json.dumps(item).encode("utf-8"),
+                access="public",
+                content_type="application/json",
+                add_random_suffix=False,
+            )
+            item.update({"artwork_url": blob.url, "metadata_url": metadata_blob.url})
         return item
 
     directory = _local_dir(gallery_id)
@@ -100,25 +101,26 @@ async def list_gallery(gallery_id: str) -> list[dict]:
     gallery_id = _safe_gallery_id(gallery_id)
 
     if use_vercel_blob():
-        client = AsyncBlobClient()
-        page = list_objects(prefix=f"gallery/{gallery_id}/", limit=100)
-        metadata_items = [item for item in page.blobs if item.pathname.endswith(".json")]
-        results = []
-        for item in metadata_items:
-            result = await client.get(item.url, access="public")
-            if not result or result.status_code != 200 or result.stream is None:
-                continue
-            chunks = []
-            async for chunk in result.stream:
-                chunks.append(chunk)
-            metadata = json.loads(b"".join(chunks).decode("utf-8"))
-            svg_pathname = item.pathname[:-5] + ".svg"
-            svg_candidates = [b for b in page.blobs if b.pathname == svg_pathname]
-            if not svg_candidates:
-                continue
-            metadata["artwork_url"] = svg_candidates[0].url
-            results.append(metadata)
-        return sorted(results, key=lambda entry: entry.get("saved_at", ""), reverse=True)
+        async with AsyncBlobClient() as client:
+            page = await client.list_objects(prefix=f"gallery/{gallery_id}/", limit=100)
+            metadata_items = [item for item in page.blobs if item.pathname.endswith(".json")]
+            results = []
+            async with httpx.AsyncClient(timeout=10.0) as http_client:
+                for item in metadata_items:
+                    metadata_response = await http_client.get(item.url)
+                    if metadata_response.status_code != 200:
+                        continue
+                    try:
+                        metadata = metadata_response.json()
+                    except ValueError:
+                        continue
+                    svg_pathname = item.pathname[:-5] + ".svg"
+                    svg_candidates = [b for b in page.blobs if b.pathname == svg_pathname]
+                    if not svg_candidates:
+                        continue
+                    metadata["artwork_url"] = svg_candidates[0].url
+                    results.append(metadata)
+            return sorted(results, key=lambda entry: entry.get("saved_at", ""), reverse=True)
 
     directory = LOCAL_GALLERY_DIR / gallery_id
     if not directory.exists():
@@ -144,7 +146,8 @@ async def delete_artwork(gallery_id: str, artwork_id: str) -> bool:
     if use_vercel_blob():
         svg_path = f"gallery/{gallery_id}/{artwork_id}.svg"
         json_path = f"gallery/{gallery_id}/{artwork_id}.json"
-        await asyncio.to_thread(blob_delete, [svg_path, json_path])
+        async with AsyncBlobClient() as client:
+            await client.delete([svg_path, json_path])
         return True
 
     directory = LOCAL_GALLERY_DIR / gallery_id
