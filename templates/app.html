@@ -3,19 +3,15 @@
 {% block content %}
 <section class="creation-page" aria-labelledby="create-title">
     <div class="section-heading section-heading--wide">
-        <!-- <p class="eyebrow">CREATE</p> -->
-        <!-- <h2 id="create-title">Speak. Shape. Create.</h2> -->
-        <!-- <p>Choose a theme, then let the character of your voice become the artwork.</p> -->
     </div>
 
     <div class="creation-grid">
         <section class="creation-panel" aria-labelledby="input-title">
             <div class="panel-header">
                 <div>
-                    <!-- <p class="eyebrow">YOUR INPUT</p> -->
                     <h2 id="input-title">Select a theme & Speak</h2>
                 </div>
-                <!-- <span class="time-limit">Up to {{ max_recording_seconds }} seconds</span> -->
+                
             </div>
 
             <fieldset class="theme-fieldset">
@@ -68,30 +64,14 @@
 
     </div>
 
-            <!-- <aside class="voice-dna-intro" aria-labelledby="dna-title">
-            <p class="eyebrow">WHAT WE READ</p>
-            <h2 id="dna-title">Voice DNA</h2>
-            <p>
-                Your recording is analyzed for characteristics of how you speak—not simply what you say.
-            </p>
 
-            <dl class="feature-list">
-                <div><dt>Pitch</dt><dd>Height and tone</dd></div>
-                <div><dt>Energy</dt><dd>Vocal intensity</dd></div>
-                <div><dt>Rhythm</dt><dd>Pattern and pulse</dd></div>
-                <div><dt>Variation</dt><dd>Change over time</dd></div>
-                <div><dt>Pause</dt><dd>Space between sounds</dd></div>
-            </dl>
-
-            <p class="fine-print">Your words may be transcribed for speech analysis, but the visual system is driven by voice characteristics.</p>
-        </aside> -->
 </section>
 
 <section class="result-section" id="result-section" aria-labelledby="result-title" hidden>
     <div class="section-heading section-heading--wide">
-        <p class="eyebrow">02 · YOUR ARTWORK</p>
-        <h2 id="result-title">Your voice, translated.</h2>
-        <p id="result-message">The recording has been converted into visual parameters.</p>
+        <!-- <p class="eyebrow">02 · YOUR ARTWORK</p> -->
+        <h2 id="result-title">Your Artwork</h2>
+        <!-- <p id="result-message">The recording has been converted into visual parameters.</p> -->
     </div>
 
     <div class="result-grid">
@@ -242,6 +222,8 @@
                 const mimeType = mediaRecorder.mimeType || 'audio/webm';
                 recordingBlob = new Blob(recordedChunks, { type: mimeType });
                 selectedSource = 'microphone';
+                recorderStatus.textContent = 'Recording ready';
+                recorderHelp.textContent = 'Your recording is ready. Generate artwork when you are ready.';
                 updateGenerateButton();
             });
 
@@ -296,12 +278,23 @@
         generateButton.textContent = 'Analyzing your voice…';
 
         const formData = new FormData();
-        const file = source instanceof Blob
-            ? new File([source], 'reotoi-recording.webm', { type: source.type || 'audio/webm' })
+        const microphoneBlob = source instanceof Blob;
+        const microphoneMime = microphoneBlob ? (source.type || 'audio/webm').split(';', 1)[0].toLowerCase() : '';
+        const microphoneExtension = {
+            'audio/webm': 'webm',
+            'audio/ogg': 'ogg',
+            'audio/mp4': 'm4a',
+            'audio/m4a': 'm4a',
+            'audio/wav': 'wav',
+            'audio/wave': 'wav',
+            'audio/x-wav': 'wav',
+        }[microphoneMime] || 'webm';
+        const file = microphoneBlob
+            ? new File([source], `reotoi-recording.${microphoneExtension}`, { type: source.type || 'audio/webm' })
             : source;
         formData.append('audio', file);
         formData.append('theme', selectedTheme());
-        formData.append('input_source', source instanceof Blob ? 'microphone' : 'upload');
+        formData.append('input_source', microphoneBlob ? 'microphone' : 'upload');
 
         try {
             const response = await fetch('/generate', { method: 'POST', body: formData });
