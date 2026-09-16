@@ -11,8 +11,6 @@ reotoi/
 ├── main.py
 ├── requirements.txt
 ├── README.md
-├── .env.example
-├── .gitignore
 ├── vercel.json
 │
 ├── templates/
