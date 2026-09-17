@@ -72,11 +72,25 @@ def validate_theme(theme: str) -> str:
     return normalized
 
 
-def validate_input_source(input_source: str) -> str:
-    """Validate the explicit source selected by the browser."""
-    normalized = (input_source or "microphone").strip().lower()
+def validate_input_source(input_source: str | None) -> str:
+    """Validate the explicitly supplied audio input source."""
+    if not input_source:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "reotoi could not determine how the audio was provided. "
+                "Please record with the microphone or choose an audio file again."
+            ),
+        )
+
+    normalized = input_source.strip().lower()
+
     if normalized not in ALLOWED_INPUT_SOURCES:
-        raise HTTPException(status_code=422, detail="Invalid audio input source.")
+        raise HTTPException(
+            status_code=422,
+            detail="Invalid audio input source.",
+        )
+
     return normalized
 
 
