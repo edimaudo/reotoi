@@ -1,3 +1,10 @@
+"""reotoi · voice art — FastAPI web application.
+
+This is a server-rendered web app, not an API-first application. The browser
+records audio or accepts a fallback audio file and submits it to the /generate
+form action. Application logic is kept in function-based service modules.
+"""
+
 from __future__ import annotations
 
 import json
@@ -51,10 +58,19 @@ ALLOWED_THEMES = {
     "surprise",
 }
 
-# The browser normalizes both microphone recordings and fallback uploads to
-# 16-bit PCM WAV before submitting them. This keeps the Vercel Python runtime
-# independent of browser-specific codecs such as M4A/AAC or WebM/Opus.
-REQUIRED_AUDIO_TYPE = "audio/wav"
+# The browser currently normalizes microphone recordings and fallback uploads
+# to WAV before submitting them. We still validate the actual file bytes below
+# rather than trusting the multipart MIME label, because browsers can report
+# valid WAV blobs as application/octet-stream or another generic type.
+WAV_MIME_TYPES = {
+    "audio/wav",
+    "audio/wave",
+    "audio/x-wav",
+    "application/wav",
+    "application/x-wav",
+    "application/octet-stream",
+    "",
+}
 
 
 def validate_theme(theme: str) -> str:
@@ -78,33 +94,43 @@ def normalized_content_type(audio: UploadFile) -> str:
     return (audio.content_type or "").lower().split(";", 1)[0].strip()
 
 
-def validate_audio_metadata(audio: UploadFile, input_source: str) -> None:
-    """Require the normalized WAV contract for both supported input paths."""
+async def validate_audio_input(audio: UploadFile, input_source: str) -> bytes:
+    """Validate the submitted audio by inspecting its bytes, not just its MIME label.
+
+    The browser-side recorder produces WAV for the microphone and currently also
+    normalizes fallback uploads to WAV. Multipart MIME metadata is not considered
+    authoritative because browsers may report a generic content type.
+    """
     content_type = normalized_content_type(audio)
-    suffix = Path(audio.filename or "").suffix.lower()
-
-    if content_type != REQUIRED_AUDIO_TYPE and not (content_type == "audio/wave"):
-        message = (
-            "reotoi could not read this recording. "
-            "Please record with the microphone or choose a WAV audio file."
+    if content_type not in WAV_MIME_TYPES:
+        logger.info(
+            "Non-WAV MIME label received; validating actual bytes. source=%s content_type=%s filename=%s",
+            input_source,
+            content_type or "<missing>",
+            audio.filename or "<unnamed>",
         )
-        if input_source == "upload":
-            message = (
-                "reotoi could not read this audio file. "
-                "Please choose a WAV audio file."
+
+    header = await audio.read(12)
+    await audio.seek(0)
+
+    if len(header) < 12 or header[:4] != b"RIFF" or header[8:12] != b"WAVE":
+        if input_source == "microphone":
+            detail = (
+                "reotoi could not read this recording. The microphone data was not "
+                "received as a valid WAV file. Please record again."
             )
-        raise HTTPException(status_code=415, detail=message)
+        else:
+            detail = (
+                "reotoi could not read this audio file. Please choose a supported "
+                "audio file and try again."
+            )
+        raise HTTPException(status_code=415, detail=detail)
 
-    if suffix and suffix not in {".wav", ".wave"}:
-        message = (
-            "The audio content is WAV, but the filename does not match the format. "
-            "Please try recording again or choose a WAV file."
-        )
-        raise HTTPException(status_code=415, detail=message)
+    return header
 
 
 def audio_suffix(_: UploadFile) -> str:
-    """All normalized browser submissions are stored as WAV."""
+    """Use a WAV suffix because the validated processing format is WAV."""
     return ".wav"
 
 
@@ -112,8 +138,8 @@ async def save_audio_temporarily(
     audio: UploadFile,
     input_source: str,
 ) -> tuple[str, int]:
-    """Stream normalized WAV audio to a temporary file with size protection."""
-    validate_audio_metadata(audio, input_source)
+    """Stream validated WAV audio to a temporary file with size protection."""
+    await validate_audio_input(audio, input_source)
     total = 0
     handle = tempfile.NamedTemporaryFile(delete=False, suffix=audio_suffix(audio))
     temp_path = handle.name
