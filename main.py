@@ -28,9 +28,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("reotoi")
 
 app = FastAPI(
-    title="reotoi · voice art",
-    description="Turn characteristics of a voice into unique visual artwork.",
-    version="1.0.0",
+    title="reotoi"
 )
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
