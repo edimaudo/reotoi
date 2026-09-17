@@ -224,7 +224,7 @@ async def gallery_page(request: Request) -> HTMLResponse:
 async def generate_voice_art(
     audio: Annotated[UploadFile, File(...)],
     theme: Annotated[str, Form()] = "surprise",
-    input_source: Annotated[str, Form()] = "microphone",
+    input_source: Annotated[str | None, Form()] = None, # input_source: Annotated[str, Form()] = "microphone",
 ) -> JSONResponse:
     """Process submitted voice audio and return the generated artwork."""
     validated_theme = validate_theme(theme)
@@ -235,6 +235,9 @@ async def generate_voice_art(
         acoustic_features = analyze_audio(temp_path)
         speech_analysis = analyze_speech(temp_path)
         duration = speech_analysis.get("duration_seconds") or 0.0
+
+
+        
         if duration > MAX_RECORDING_SECONDS + 0.25:
             raise HTTPException(status_code=422, detail=f"Audio must be {MAX_RECORDING_SECONDS} seconds or less.")
 
