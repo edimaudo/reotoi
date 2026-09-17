@@ -1,10 +1,3 @@
-"""reotoi · voice art — FastAPI web application.
-
-This is a server-rendered web app, not an API-first application. The browser
-records audio or accepts a fallback audio file and submits it to the /generate
-form action. Application logic is kept in function-based service modules.
-"""
-
 from __future__ import annotations
 
 import json
