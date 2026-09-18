@@ -1,8 +1,9 @@
-"""Lightweight WAV normalization for reotoi.
+"""WAV normalization for reotoi's audio analysis layer.
 
-The browser is responsible for decoding user-selected audio formats and
-submitting a WAV file. This service only validates that WAV and standardizes it
-for the analysis layer without bundling FFmpeg or another codec runtime.
+The browser accepts multiple user-facing media formats and converts them to a
+small mono 16 kHz PCM WAV before sending them to FastAPI. This service therefore
+only has to validate and standardize WAV processing input. No FFmpeg runtime is
+used here.
 """
 
 from __future__ import annotations
@@ -79,19 +80,13 @@ def normalize_audio(
     input_path: str | Path,
     output_path: str | Path | None = None,
 ) -> str:
-    """Validate a browser-generated WAV and standardize it for analysis.
-
-    The function intentionally supports WAV only. MP3, M4A, OGG, WebM and
-    other codec formats must be converted by the browser before upload.
-    """
+    """Validate and standardize the browser-normalized WAV for analysis."""
     source = Path(input_path).expanduser().resolve()
     if not source.is_file():
         raise ValueError("The submitted audio file could not be found.")
 
     if source.suffix.lower() != ".wav" or not _is_wav(source):
-        raise ValueError(
-            "reotoi could not read this recording. The recording must be submitted as WAV."
-        )
+        raise ValueError("reotoi could not read the normalized audio recording.")
 
     try:
         info = sf.info(str(source))
