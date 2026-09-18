@@ -1,10 +1,4 @@
-"""WAV normalization for reotoi's audio analysis layer.
-
-The browser accepts multiple user-facing media formats and converts them to a
-small mono 16 kHz PCM WAV before sending them to FastAPI. This service therefore
-only has to validate and standardize WAV processing input. No FFmpeg runtime is
-used here.
-"""
+"""Validate and normalize browser-prepared PCM WAV audio for reotoi."""
 
 from __future__ import annotations
 
@@ -30,7 +24,7 @@ def _temporary_wav_path() -> str:
 
 
 def _is_wav(path: Path) -> bool:
-    """Check the RIFF/WAVE signature before decoding."""
+    """Check the RIFF/WAVE file signature."""
     try:
         with path.open("rb") as handle:
             header = handle.read(12)
@@ -53,11 +47,14 @@ def _write_normalized_wav(
     if audio.ndim == 2:
         audio = np.mean(audio, axis=1)
     elif audio.ndim != 1:
-        raise ValueError("The WAV recording has an unsupported channel layout.")
+        raise ValueError("The audio recording has an unsupported channel layout.")
 
     audio = np.asarray(audio, dtype=np.float32)
     if audio.size == 0:
         raise ValueError("The audio recording is empty.")
+
+    if sample_rate <= 0:
+        raise ValueError("The audio recording has an invalid sample rate.")
 
     if sample_rate != TARGET_SAMPLE_RATE:
         audio = librosa.resample(
@@ -66,6 +63,9 @@ def _write_normalized_wav(
             target_sr=TARGET_SAMPLE_RATE,
         )
         sample_rate = TARGET_SAMPLE_RATE
+
+    if audio.size == 0:
+        raise ValueError("The audio recording is empty after normalization.")
 
     sf.write(
         str(output_path),
@@ -80,13 +80,21 @@ def normalize_audio(
     input_path: str | Path,
     output_path: str | Path | None = None,
 ) -> str:
-    """Validate and standardize the browser-normalized WAV for analysis."""
+    """Validate and standardize the browser-prepared WAV for analysis.
+
+    User-facing input formats are handled before this function is called.
+    This function intentionally validates the actual file bytes rather than
+    relying on a browser MIME type.
+    """
     source = Path(input_path).expanduser().resolve()
+
     if not source.is_file():
         raise ValueError("The submitted audio file could not be found.")
 
-    if source.suffix.lower() != ".wav" or not _is_wav(source):
-        raise ValueError("reotoi could not read the normalized audio recording.")
+    if not _is_wav(source):
+        raise ValueError(
+            "reotoi could not process the normalized audio. Please try the recording or file again."
+        )
 
     try:
         info = sf.info(str(source))
@@ -101,7 +109,9 @@ def normalize_audio(
     except ValueError:
         raise
     except (RuntimeError, OSError) as exc:
-        raise ValueError("reotoi could not decode the WAV recording.") from exc
+        raise ValueError(
+            "reotoi could not decode the normalized audio. Please try the recording or file again."
+        ) from exc
 
     destination_was_provided = output_path is not None
     destination = (
@@ -112,10 +122,16 @@ def normalize_audio(
     destination.parent.mkdir(parents=True, exist_ok=True)
 
     try:
-        _write_normalized_wav(audio, int(sample_rate), destination)
+        _write_normalized_wav(
+            audio,
+            int(sample_rate),
+            destination,
+        )
 
         if not destination.is_file() or destination.stat().st_size <= 44:
-            raise ValueError("The WAV recording could not be normalized.")
+            raise ValueError(
+                "The normalized audio could not be prepared for analysis."
+            )
 
         return str(destination)
     except Exception:
