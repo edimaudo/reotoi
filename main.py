@@ -1,8 +1,8 @@
 """reotoi · voice art — FastAPI web application.
 
-Server-rendered web application. The browser accepts microphone input or a
-user-selected media file, decodes/normalizes the audio, and submits a small
-PCM WAV payload to /generate for analysis.
+Server-rendered web application. The browser records microphone audio or accepts
+audio media files. Formats supported by the server are decoded directly; other
+supported media containers are normalized by the browser before analysis.
 """
 
 from __future__ import annotations
@@ -75,16 +75,44 @@ def validate_input_source(input_source: str) -> str:
     return normalized
 
 
-async def save_audio_temporarily(audio: UploadFile) -> tuple[str, int]:
-    """Save the browser-normalized WAV payload to a temporary file.
+def _safe_audio_suffix(audio: UploadFile) -> str:
+    """Return a safe extension that preserves the uploaded audio format."""
+    filename_suffix = Path(audio.filename or "").suffix.lower()
 
-    The server deliberately does not use the browser MIME type to decide what
-    the audio is. The normalization service validates the actual WAV bytes.
-    """
+    mime_to_suffix = {
+        "audio/mpeg": ".mp3",
+        "audio/mp3": ".mp3",
+        "audio/ogg": ".ogg",
+        "audio/wav": ".wav",
+        "audio/wave": ".wav",
+        "audio/x-wav": ".wav",
+        "audio/flac": ".flac",
+        "audio/mp4": ".mp4",
+        "video/mp4": ".mp4",
+        "audio/x-m4a": ".m4a",
+        "audio/webm": ".webm",
+        "video/webm": ".webm",
+        "audio/aac": ".aac",
+    }
+
+    if filename_suffix in {
+        ".wav", ".wave", ".mp3", ".ogg", ".oga", ".flac",
+        ".mp4", ".m4a", ".webm", ".aac", ".aif", ".aiff",
+        ".au", ".snd",
+    }:
+        return filename_suffix
+
+    content_type = (audio.content_type or "").lower().split(";", 1)[0].strip()
+    return mime_to_suffix.get(content_type, ".bin")
+
+
+async def save_audio_temporarily(audio: UploadFile) -> tuple[str, int]:
+    """Save the original upload while preserving its audio format suffix."""
     total = 0
+    suffix = _safe_audio_suffix(audio)
     handle = tempfile.NamedTemporaryFile(
         prefix="reotoi-input-",
-        suffix=".wav",
+        suffix=suffix,
         delete=False,
     )
     temp_path = handle.name
@@ -197,7 +225,7 @@ async def generate_voice_art(
     input_source: Annotated[str, Form(...)],
     theme: Annotated[str, Form()] = "surprise",
 ) -> JSONResponse:
-    """Analyze prepared voice audio and return the generated artwork."""
+    """Decode, normalize and analyze one microphone or audio-file input."""
     validated_theme = validate_theme(theme)
     validated_source = validate_input_source(input_source)
 
@@ -205,9 +233,13 @@ async def generate_voice_art(
     normalized_path = None
 
     try:
-        # This is an internal processing step. The browser can accept multiple
-        # user-facing media formats; this function receives the normalized WAV.
-        normalized_path = normalize_audio(temp_path)
+        # Directly decodable formats such as MP3, OGG, FLAC and WAV are handled
+        # by the audio service. Browser-only container/codec inputs such as MP4,
+        # M4A and WebM arrive here only after browser-side normalization.
+        normalized_path = normalize_audio(
+            temp_path,
+            max_duration_seconds=MAX_RECORDING_SECONDS,
+        )
 
         acoustic_features = analyze_audio(normalized_path)
         speech_analysis = analyze_speech(normalized_path)
