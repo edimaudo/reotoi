@@ -3,15 +3,25 @@
 {% block content %}
 <section class="gallery-page" aria-labelledby="gallery-title">
     <div class="section-heading section-heading--wide">
+        
+        <h1 id="gallery-title">Your voice in visual form.</h1>
+        
     </div>
 
-    <section class="gallery-empty" aria-labelledby="empty-title">
+    <section id="gallery-list" class="gallery-list" aria-live="polite"></section>
+
+    <section class="gallery-empty" id="gallery-empty" aria-labelledby="empty-title">
         <div class="gallery-empty__mark" aria-hidden="true">
             <span></span><span></span><span></span>
         </div>
-        <p class="eyebrow">NOTHING SAVED YET</p>
+        
         <h2 id="empty-title">Make your first piece.</h2>
-        <a class="button button--primary" href="/app">Create artwork</a>
+        
+        <a class="button button--primary" href="/create">Create artwork</a>
     </section>
 </section>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', path='js/gallery.js') }}" defer></script>
 {% endblock %}
