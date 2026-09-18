@@ -5,10 +5,12 @@
   if (!root) return;
 
   const maxSeconds = Number(root.dataset.maxSeconds || 30);
-  const maxUploadBytes = 4 * 1024 * 1024;
+  const maxInputBytes = 20 * 1024 * 1024;
+  const maxServerBytes = 4 * 1024 * 1024;
   const targetSampleRate = 16000;
 
-  // Formats that audio_conversion.py can decode directly through libsndfile.
+  // Formats that libsndfile is expected to decode directly on the server.
+  // The server ultimately checks the actual bytes, not these extensions.
   const serverDecodedExtensions = new Set([
     ".wav",
     ".wave",
@@ -22,7 +24,8 @@
     ".snd",
   ]);
 
-  // Formats that are accepted as user input and normalized in the browser.
+  // Containers/codecs that are normally better handled by the browser's
+  // built-in media decoder, avoiding an external codec runtime.
   const browserDecodedExtensions = new Set([
     ".mp4",
     ".m4a",
@@ -39,10 +42,13 @@
     "audio/mpeg": ".mp3",
     "audio/mp3": ".mp3",
     "audio/ogg": ".ogg",
+    "application/ogg": ".ogg",
     "audio/wav": ".wav",
     "audio/wave": ".wav",
     "audio/x-wav": ".wav",
     "audio/flac": ".flac",
+    "audio/aiff": ".aiff",
+    "audio/x-aiff": ".aiff",
     "audio/mp4": ".mp4",
     "video/mp4": ".mp4",
     "audio/x-m4a": ".m4a",
@@ -93,6 +99,18 @@
   let latestResult = null;
   let preparationToken = 0;
 
+  if (audioFileInput) {
+    audioFileInput.setAttribute(
+      "accept",
+      [
+        "audio/*",
+        "video/mp4",
+        "video/webm",
+        ...Array.from(supportedExtensions),
+      ].join(",")
+    );
+  }
+
   function setError(message) {
     if (!formError) return;
 
@@ -134,7 +152,9 @@
 
       try {
         processorNode.disconnect();
-      } catch (_) {}
+      } catch (_) {
+        // Ignore cleanup errors.
+      }
 
       processorNode = null;
     }
@@ -142,7 +162,9 @@
     if (sourceNode) {
       try {
         sourceNode.disconnect();
-      } catch (_) {}
+      } catch (_) {
+        // Ignore cleanup errors.
+      }
 
       sourceNode = null;
     }
@@ -150,7 +172,9 @@
     if (silentGain) {
       try {
         silentGain.disconnect();
-      } catch (_) {}
+      } catch (_) {
+        // Ignore cleanup errors.
+      }
 
       silentGain = null;
     }
@@ -253,7 +277,6 @@
   function getFileExtension(file) {
     const name = file?.name || "";
     const dot = name.lastIndexOf(".");
-
     return dot === -1 ? "" : name.slice(dot).toLowerCase();
   }
 
@@ -275,11 +298,22 @@
   }
 
   function isSupportedInputFile(file) {
-    return Boolean(resolveExtension(file));
+    const extension = resolveExtension(file);
+    const mimeType = getMimeType(file);
+
+    // Known formats are accepted by extension or MIME type.
+    if (extension) return true;
+
+    // Allow other browser-recognized audio types instead of rejecting them
+    // just because their filename extension is unfamiliar.
+    if (mimeType.startsWith("audio/")) return true;
+
+    return mimeType === "video/mp4" || mimeType === "video/webm";
   }
 
   function canSendDirectlyToServer(file) {
-    return serverDecodedExtensions.has(resolveExtension(file));
+    const extension = resolveExtension(file);
+    return serverDecodedExtensions.has(extension);
   }
 
   async function normalizeAudioBuffer(audioBuffer) {
@@ -288,15 +322,11 @@
 
     if (!OfflineAudioContextCtor) {
       throw new Error(
-        "Your browser cannot prepare this audio file. Please use MP3, OGG, FLAC or WAV instead."
+        "Your browser cannot prepare this audio file for analysis. Please use MP3, OGG, FLAC or WAV instead."
       );
     }
 
-    if (
-      !audioBuffer ||
-      !audioBuffer.length ||
-      !audioBuffer.duration
-    ) {
+    if (!audioBuffer || !audioBuffer.length || !audioBuffer.duration) {
       throw new Error(
         "The selected file does not contain a usable audio track."
       );
@@ -310,74 +340,47 @@
 
     const frameCount = Math.max(
       1,
-      Math.ceil(
-        audioBuffer.duration * targetSampleRate
-      )
+      Math.ceil(audioBuffer.duration * targetSampleRate)
     );
 
-    const offlineContext =
-      new OfflineAudioContextCtor(
-        1,
-        frameCount,
-        targetSampleRate
-      );
+    const offlineContext = new OfflineAudioContextCtor(
+      1,
+      frameCount,
+      targetSampleRate
+    );
 
-    const monoBuffer =
-      offlineContext.createBuffer(
-        1,
-        audioBuffer.length,
-        audioBuffer.sampleRate
-      );
+    const monoBuffer = offlineContext.createBuffer(
+      1,
+      audioBuffer.length,
+      audioBuffer.sampleRate
+    );
 
-    const monoSamples =
-      monoBuffer.getChannelData(0);
+    const monoSamples = monoBuffer.getChannelData(0);
+    const channelCount = Math.max(
+      1,
+      audioBuffer.numberOfChannels
+    );
 
-    const channelCount =
-      Math.max(
-        1,
-        audioBuffer.numberOfChannels
-      );
+    for (let channel = 0; channel < channelCount; channel += 1) {
+      const channelSamples = audioBuffer.getChannelData(channel);
 
-    for (
-      let channel = 0;
-      channel < channelCount;
-      channel += 1
-    ) {
-      const channelSamples =
-        audioBuffer.getChannelData(channel);
-
-      for (
-        let index = 0;
-        index < channelSamples.length;
-        index += 1
-      ) {
+      for (let index = 0; index < channelSamples.length; index += 1) {
         monoSamples[index] +=
-          channelSamples[index] /
-          channelCount;
+          channelSamples[index] / channelCount;
       }
     }
 
-    const bufferSource =
-      offlineContext.createBufferSource();
-
+    const bufferSource = offlineContext.createBufferSource();
     bufferSource.buffer = monoBuffer;
-    bufferSource.connect(
-      offlineContext.destination
-    );
-
+    bufferSource.connect(offlineContext.destination);
     bufferSource.start(0);
 
-    const rendered =
-      await offlineContext.startRendering();
-
-    return rendered
-      .getChannelData(0)
-      .slice();
+    const rendered = await offlineContext.startRendering();
+    return rendered.getChannelData(0).slice();
   }
 
   async function decodeUploadedFile(file) {
-    const AudioContextCtor =
-      getAudioContextConstructor();
+    const AudioContextCtor = getAudioContextConstructor();
 
     if (!AudioContextCtor) {
       throw new Error(
@@ -388,20 +391,12 @@
     let decodingContext = null;
 
     try {
-      decodingContext =
-        new AudioContextCtor();
+      decodingContext = new AudioContextCtor();
 
-      const arrayBuffer =
-        await file.arrayBuffer();
+      const arrayBuffer = await file.arrayBuffer();
+      const decoded = await decodingContext.decodeAudioData(arrayBuffer);
 
-      const decoded =
-        await decodingContext.decodeAudioData(
-          arrayBuffer
-        );
-
-      return await normalizeAudioBuffer(
-        decoded
-      );
+      return await normalizeAudioBuffer(decoded);
     } catch (error) {
       console.error(
         "Browser audio decoding failed:",
@@ -409,69 +404,30 @@
       );
 
       throw new Error(
-        `reotoi could not decode ${file.name}. Try MP3, OGG, FLAC or WAV, or use a browser-supported MP4/M4A/WebM file.`
+        `reotoi could not decode ${
+          file.name || "this audio file"
+        }. The format or codec is not supported by this browser.`
       );
     } finally {
       if (decodingContext) {
-        decodingContext
-          .close()
-          .catch(() => {});
+        decodingContext.close().catch(() => {});
       }
     }
   }
 
-  async function prepareUploadedFile(
-    file,
-    token
-  ) {
-    const extension =
-      resolveExtension(file);
+  async function prepareBrowserAudio(file, token) {
+    const normalizedSamples = await decodeUploadedFile(file);
 
-    /*
-     * MP3/OGG/FLAC/WAV and other libsndfile-supported
-     * formats are sent in their original form.
-     * The server decodes them directly.
-     */
-    if (canSendDirectlyToServer(file)) {
-      return {
-        type: "upload",
-        blob: file,
-        filename:
-          file.name ||
-          `reotoi-upload-${Date.now()}${
-            extension || ".audio"
-          }`,
-        originalFilename:
-          file.name || "audio file",
-        contentType:
-          file.type || "",
-        format: extension,
-      };
-    }
-
-    /*
-     * MP4/M4A/WebM/AAC are decoded by the browser
-     * and converted to WAV.
-     */
-    const normalizedSamples =
-      await decodeUploadedFile(file);
-
-    if (
-      token !== preparationToken
-    ) {
+    if (token !== preparationToken) {
       return null;
     }
 
-    const wavBlob =
-      encodeWav(
-        normalizedSamples,
-        targetSampleRate
-      );
+    const wavBlob = encodeWav(
+      normalizedSamples,
+      targetSampleRate
+    );
 
-    if (
-      wavBlob.size >
-      maxUploadBytes
-    ) {
+    if (wavBlob.size > maxServerBytes) {
       throw new Error(
         "The prepared audio is too large to process. Please choose a shorter audio file."
       );
@@ -480,15 +436,46 @@
     return {
       type: "upload",
       blob: wavBlob,
-      filename:
-        `reotoi-upload-${Date.now()}.wav`,
-      originalFilename:
-        file.name || "audio file",
-      contentType:
-        "audio/wav",
+      filename: `reotoi-upload-${Date.now()}.wav`,
+      originalFilename: file.name || "audio file",
+      contentType: "audio/wav",
       format: ".wav",
-      normalizedFrom: extension,
+      normalizedFrom:
+        resolveExtension(file) || getMimeType(file),
     };
+  }
+
+  async function prepareUploadedFile(file, token) {
+    /*
+     * MP3/OGG/FLAC/WAV and other libsndfile-compatible inputs can be sent as
+     * supplied. audio_conversion.py identifies the format from the bytes, so
+     * an incorrect MIME type or extension does not break decoding.
+     */
+    if (canSendDirectlyToServer(file)) {
+      if (file.size > maxServerBytes) {
+        throw new Error(
+          "Please choose an audio file smaller than 4 MB for this format."
+        );
+      }
+
+      return {
+        type: "upload",
+        blob: file,
+        filename:
+          file.name ||
+          `reotoi-upload-${Date.now()}.audio`,
+        originalFilename:
+          file.name || "audio file",
+        contentType: file.type || "",
+        format: resolveExtension(file),
+      };
+    }
+
+    /*
+     * MP4/M4A/WebM/AAC and other browser-supported media are decoded in the
+     * browser and converted to mono 16 kHz PCM WAV. No external codec runtime.
+     */
+    return prepareBrowserAudio(file, token);
   }
 
   async function prepareMicrophoneSamples(
@@ -583,16 +570,14 @@
         new AudioContextCtor();
 
       mediaStream =
-        await navigator.mediaDevices.getUserMedia(
-          {
-            audio: {
-              channelCount: 1,
-              echoCancellation: true,
-              noiseSuppression: true,
-              autoGainControl: true,
-            },
-          }
-        );
+        await navigator.mediaDevices.getUserMedia({
+          audio: {
+            channelCount: 1,
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        });
 
       await audioContext.resume();
 
@@ -628,10 +613,8 @@
             );
 
           copy.set(input);
-
           recordedSamples.push(copy);
-          recordedSampleCount +=
-            copy.length;
+          recordedSampleCount += copy.length;
         };
 
       sourceNode.connect(
@@ -682,7 +665,7 @@
             elapsed >=
             maxSeconds
           ) {
-            stopRecording();
+            void stopRecording();
           }
         }, 1000);
     } catch (error) {
@@ -764,6 +747,18 @@
       return;
     }
 
+    if (
+      duration >
+      maxSeconds + 0.25
+    ) {
+      setError(
+        `Audio must be ${maxSeconds} seconds or less.`
+      );
+
+      updateGenerateState();
+      return;
+    }
+
     const token =
       ++preparationToken;
 
@@ -802,7 +797,7 @@
 
       if (
         wavBlob.size >
-        maxUploadBytes
+        maxServerBytes
       ) {
         throw new Error(
           "The prepared recording is too large to process. Please record a shorter sample."
@@ -874,26 +869,15 @@
       "click",
       () => {
         if (recording) {
-          stopRecording();
+          void stopRecording();
         } else {
-          startRecording();
+          void startRecording();
         }
       }
     );
   }
 
   if (audioFileInput) {
-    audioFileInput.setAttribute(
-      "accept",
-      [
-        "audio/*",
-        "video/mp4",
-        ...Array.from(
-          supportedExtensions
-        ),
-      ].join(",")
-    );
-
     audioFileInput.addEventListener(
       "change",
       async () => {
@@ -933,11 +917,11 @@
 
           if (recorderHelp) {
             recorderHelp.textContent =
-              "Choose MP3, OGG, FLAC, WAV, MP4, M4A or WebM.";
+              "Choose an MP3, OGG, FLAC, WAV, MP4/M4A, WebM or another browser-supported audio file.";
           }
 
           setError(
-            "This file type is not supported. Use MP3, OGG, FLAC, WAV, MP4, M4A or WebM."
+            "This file type is not supported by reotoi. Choose an audio format your browser or reotoi can decode."
           );
 
           return;
@@ -945,7 +929,7 @@
 
         if (
           file.size >
-          maxUploadBytes
+          maxInputBytes
         ) {
           if (fileName) {
             fileName.textContent =
@@ -959,11 +943,11 @@
 
           if (recorderHelp) {
             recorderHelp.textContent =
-              "Choose a file smaller than 4 MB or use the microphone instead.";
+              "Choose a file smaller than 20 MB or use the microphone instead.";
           }
 
           setError(
-            "Please choose an audio file smaller than 4 MB."
+            "Please choose an audio file smaller than 20 MB."
           );
 
           return;
@@ -977,16 +961,21 @@
         preparingAudio = true;
         updateGenerateState();
 
+        const directToServer =
+          canSendDirectlyToServer(
+            file
+          );
+
         if (recorderStatus) {
           recorderStatus.textContent =
-            canSendDirectlyToServer(file)
+            directToServer
               ? "Audio file ready"
               : "Preparing audio file";
         }
 
         if (recorderHelp) {
           recorderHelp.textContent =
-            canSendDirectlyToServer(file)
+            directToServer
               ? "The audio file is ready to be analyzed."
               : "Converting the audio track to a format reotoi can analyze…";
         }
@@ -1320,12 +1309,6 @@
     const form =
       new FormData();
 
-    /*
-     * The payload can be either:
-     * - an original MP3/OGG/FLAC/WAV/etc. that the server can decode
-     * - a browser-normalized WAV for formats that need browser decoding
-     * - a browser-normalized WAV for microphone recordings
-     */
     form.append(
       "audio",
       source.blob,
@@ -1438,7 +1421,9 @@
   if (generateButton) {
     generateButton.addEventListener(
       "click",
-      generate
+      () => {
+        void generate();
+      }
     );
   }
 
