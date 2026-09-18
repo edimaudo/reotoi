@@ -76,38 +76,36 @@ def validate_input_source(input_source: str) -> str:
 
 
 def _safe_audio_suffix(audio: UploadFile) -> str:
-    """Return a safe extension that preserves the uploaded audio format."""
-    filename_suffix = Path(audio.filename or "").suffix.lower()
+    """Return the original filename suffix when it is safe to keep.
 
-    mime_to_suffix = {
-        "audio/mpeg": ".mp3",
-        "audio/mp3": ".mp3",
-        "audio/ogg": ".ogg",
-        "audio/wav": ".wav",
-        "audio/wave": ".wav",
-        "audio/x-wav": ".wav",
-        "audio/flac": ".flac",
-        "audio/mp4": ".mp4",
-        "video/mp4": ".mp4",
-        "audio/x-m4a": ".m4a",
-        "audio/webm": ".webm",
-        "video/webm": ".webm",
-        "audio/aac": ".aac",
+    Audio decoding does not depend on this suffix. The conversion service
+    inspects the actual uploaded bytes, so an unknown or missing extension is
+    still safe.
+    """
+    suffix = Path(audio.filename or "").suffix.lower()
+
+    allowed_suffixes = {
+        ".wav",
+        ".wave",
+        ".mp3",
+        ".ogg",
+        ".oga",
+        ".flac",
+        ".aif",
+        ".aiff",
+        ".au",
+        ".snd",
+        ".mp4",
+        ".m4a",
+        ".webm",
+        ".aac",
     }
 
-    if filename_suffix in {
-        ".wav", ".wave", ".mp3", ".ogg", ".oga", ".flac",
-        ".mp4", ".m4a", ".webm", ".aac", ".aif", ".aiff",
-        ".au", ".snd",
-    }:
-        return filename_suffix
-
-    content_type = (audio.content_type or "").lower().split(";", 1)[0].strip()
-    return mime_to_suffix.get(content_type, ".bin")
+    return suffix if suffix in allowed_suffixes else ".audio"
 
 
 async def save_audio_temporarily(audio: UploadFile) -> tuple[str, int]:
-    """Save the original upload while preserving its audio format suffix."""
+    """Save the original upload without depending on its MIME type."""
     total = 0
     suffix = _safe_audio_suffix(audio)
     handle = tempfile.NamedTemporaryFile(
@@ -186,7 +184,7 @@ async def landing_page(request: Request) -> HTMLResponse:
     return attach_gallery_cookie(request, response)
 
 
-@app.get("/create", response_class=HTMLResponse)
+@app.get("/app", response_class=HTMLResponse)
 async def app_page(request: Request) -> HTMLResponse:
     response = templates.TemplateResponse(
         request=request,
@@ -233,9 +231,8 @@ async def generate_voice_art(
     normalized_path = None
 
     try:
-        # Directly decodable formats such as MP3, OGG, FLAC and WAV are handled
-        # by the audio service. Browser-only container/codec inputs such as MP4,
-        # M4A and WebM arrive here only after browser-side normalization.
+        # audio_conversion.py detects supported formats from the actual uploaded
+        # bytes. Browser-normalized WAV is also accepted through the same path.
         normalized_path = normalize_audio(
             temp_path,
             max_duration_seconds=MAX_RECORDING_SECONDS,
