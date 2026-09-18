@@ -1,11 +1,11 @@
 from __future__ import annotations
-import json
+
 import logging
 import os
 import tempfile
-import uuid
 from pathlib import Path
 from typing import Annotated
+
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -16,7 +16,6 @@ from starlette.responses import Response
 from services.art_generator import render_svg
 from services.audio_conversion import normalize_audio
 from services.assemblyai_service import analyze_speech
-from services.gallery_service import delete_artwork, list_gallery, save_artwork
 from services.voice_features import analyze_audio, calculate_voice_dna
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -138,44 +137,20 @@ def cleanup_temp_file(file_path: str | None) -> None:
         pass
 
 
-def get_gallery_id(request: Request) -> str:
-    """Get the anonymous browser gallery identifier or create one."""
-    return request.cookies.get("reotoi_gallery") or uuid.uuid4().hex
-
-
-def attach_gallery_cookie(
-    request: Request,
-    response: Response,
-    gallery_id: str | None = None,
-) -> Response:
-    """Ensure the anonymous gallery identifier survives browser navigation."""
-    if request.cookies.get("reotoi_gallery"):
-        return response
-
-    response.set_cookie(
-        key="reotoi_gallery",
-        value=gallery_id or uuid.uuid4().hex,
-        max_age=60 * 60 * 24 * 365,
-        httponly=True,
-        samesite="lax",
-        secure=bool(os.getenv("VERCEL")),
-    )
-    return response
 
 
 @app.get("/", response_class=HTMLResponse)
 async def landing_page(request: Request) -> HTMLResponse:
-    response = templates.TemplateResponse(
+    return templates.TemplateResponse(
         request=request,
         name="index.html",
         context={"title": "reotoi · voice art"},
     )
-    return attach_gallery_cookie(request, response)
 
 
 @app.get("/create", response_class=HTMLResponse)
 async def app_page(request: Request) -> HTMLResponse:
-    response = templates.TemplateResponse(
+    return templates.TemplateResponse(
         request=request,
         name="app.html",
         context={
@@ -191,19 +166,16 @@ async def app_page(request: Request) -> HTMLResponse:
             ],
         },
     )
-    return attach_gallery_cookie(request, response)
 
 
 @app.get("/gallery", response_class=HTMLResponse)
 async def gallery_page(request: Request) -> HTMLResponse:
-    gallery_id = get_gallery_id(request)
-    items = await list_gallery(gallery_id)
-    response = templates.TemplateResponse(
+    """Render the browser-local gallery shell."""
+    return templates.TemplateResponse(
         request=request,
         name="gallery.html",
-        context={"title": "Gallery", "items": items},
+        context={"title": "Gallery"},
     )
-    return attach_gallery_cookie(request, response, gallery_id)
 
 
 @app.post("/generate")
@@ -220,6 +192,8 @@ async def generate_voice_art(
     normalized_path = None
 
     try:
+        # audio_conversion.py detects supported formats from the actual uploaded
+        # bytes. Browser-normalized WAV is also accepted through the same path.
         normalized_path = normalize_audio(
             temp_path,
             max_duration_seconds=MAX_RECORDING_SECONDS,
@@ -284,56 +258,6 @@ async def generate_voice_art(
         cleanup_temp_file(temp_path)
         cleanup_temp_file(normalized_path)
 
-
-@app.post("/gallery/save")
-async def save_gallery_artwork(
-    request: Request,
-    artwork_id: Annotated[str, Form(...)],
-    artwork_url: Annotated[str, Form(...)],
-    theme: Annotated[str, Form(...)],
-    voice_dna: Annotated[str, Form(...)],
-) -> JSONResponse:
-    """Save the most recently generated artwork to the current browser gallery."""
-    try:
-        dna = json.loads(voice_dna)
-        if not isinstance(dna, dict):
-            raise ValueError("Invalid Voice DNA.")
-
-        item = await save_artwork(
-            get_gallery_id(request),
-            artwork_id,
-            artwork_url,
-            validate_theme(theme),
-            dna,
-        )
-        return JSONResponse({"success": True, "item": item})
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except Exception as exc:
-        logger.exception("Gallery save failed")
-        raise HTTPException(
-            status_code=503,
-            detail="Gallery storage is unavailable right now. Please try again later.",
-        ) from exc
-
-
-@app.post("/gallery/delete/{artwork_id}")
-async def remove_gallery_artwork(
-    request: Request,
-    artwork_id: str,
-) -> JSONResponse:
-    """Delete artwork from the current browser gallery."""
-    try:
-        deleted = await delete_artwork(get_gallery_id(request), artwork_id)
-        return JSONResponse({"success": deleted})
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except Exception as exc:
-        logger.exception("Gallery delete failed")
-        raise HTTPException(
-            status_code=503,
-            detail="Gallery storage is unavailable right now. Please try again later.",
-        ) from exc
 
 
 @app.get("/404", response_class=HTMLResponse, include_in_schema=False)
