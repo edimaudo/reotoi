@@ -69,9 +69,9 @@
 
 <section class="result-section" id="result-section" aria-labelledby="result-title" hidden>
     <div class="section-heading section-heading--wide">
-        <!-- <p class="eyebrow">02 · YOUR ARTWORK</p> -->
+        
         <h2 id="result-title">Your Artwork</h2>
-        <!-- <p id="result-message">The recording has been converted into visual parameters.</p> -->
+        
     </div>
 
     <div class="result-grid">
@@ -109,6 +109,7 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="{{ url_for('static', path='js/app.js') }}" defer></script>
 <script>
 (function () {
     const maxSeconds = {{ max_recording_seconds|tojson }};
