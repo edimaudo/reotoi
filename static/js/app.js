@@ -6,6 +6,52 @@
 
   const maxSeconds = Number(root.dataset.maxSeconds || 30);
   const maxUploadBytes = 20 * 1024 * 1024;
+  const targetSampleRate = 16000;
+
+  // User-facing file formats. Actual codec support is determined by the
+  // browser's media decoder when the file is opened.
+  const supportedExtensions = new Set([
+    ".mp3",
+    ".ogg",
+    ".oga",
+    ".wav",
+    ".wave",
+    ".m4a",
+    ".mp4",
+    ".flac",
+    ".webm",
+    ".aac",
+  ]);
+
+  const supportedMimeTypes = new Set([
+    "audio/mpeg",
+    "audio/mp3",
+    "audio/ogg",
+    "audio/wav",
+    "audio/wave",
+    "audio/x-wav",
+    "audio/mp4",
+    "video/mp4",
+    "audio/x-m4a",
+    "audio/flac",
+    "audio/webm",
+    "video/webm",
+    "audio/aac",
+  ]);
+
+  const fileAccept = [
+    "audio/mpeg",
+    "audio/ogg",
+    "audio/wav",
+    "audio/mp4",
+    "video/mp4",
+    "audio/x-m4a",
+    "audio/flac",
+    "audio/webm",
+    "video/webm",
+    "audio/aac",
+    ...Array.from(supportedExtensions),
+  ].join(",");
 
   const recorder = document.getElementById("recorder");
   const recordButton = document.getElementById("record-button");
@@ -46,6 +92,11 @@
   let recording = false;
   let source = null;
   let latestResult = null;
+  let preparingAudio = false;
+
+  if (audioFileInput) {
+    audioFileInput.setAttribute("accept", fileAccept);
+  }
 
   function setError(message) {
     if (!formError) return;
@@ -72,7 +123,8 @@
   function updateGenerateState() {
     if (!generateButton) return;
 
-    generateButton.disabled = !source?.blob || recording;
+    generateButton.disabled =
+      !source?.blob || recording || preparingAudio;
   }
 
   function stopTimer() {
@@ -123,7 +175,6 @@
     if (audioContext) {
       const context = audioContext;
       audioContext = null;
-
       context.close().catch(() => {});
     }
   }
@@ -155,7 +206,6 @@
   function encodeWav(samples, sampleRate) {
     const bytesPerSample = 2;
     const numberOfChannels = 1;
-
     const dataLength = samples.length * bytesPerSample;
     const buffer = new ArrayBuffer(44 + dataLength);
     const view = new DataView(buffer);
@@ -173,8 +223,8 @@
 
     // fmt chunk.
     writeString(12, "fmt ");
-    view.setUint32(16, 16, true); // PCM chunk size.
-    view.setUint16(20, 1, true); // PCM format.
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
     view.setUint16(22, numberOfChannels, true);
     view.setUint32(24, sampleRate, true);
     view.setUint32(
@@ -187,7 +237,7 @@
       numberOfChannels * bytesPerSample,
       true
     );
-    view.setUint16(34, 16, true); // 16-bit PCM.
+    view.setUint16(34, 16, true);
 
     // data chunk.
     writeString(36, "data");
@@ -220,9 +270,303 @@
     );
   }
 
+  function getOfflineAudioContextConstructor() {
+    return (
+      window.OfflineAudioContext ||
+      window.webkitOfflineAudioContext ||
+      null
+    );
+  }
+
+  function getFileExtension(file) {
+    const name = file?.name || "";
+    const dot = name.lastIndexOf(".");
+
+    return dot === -1
+      ? ""
+      : name.slice(dot).toLowerCase();
+  }
+
+  function isSupportedInputFile(file) {
+    const type =
+      (file?.type || "")
+        .toLowerCase()
+        .split(";", 1)[0]
+        .trim();
+
+    const extension = getFileExtension(file);
+
+    if (supportedExtensions.has(extension)) {
+      return true;
+    }
+
+    return supportedMimeTypes.has(type);
+  }
+
+  async function getMediaDuration(file) {
+    const url = URL.createObjectURL(file);
+    const media = document.createElement("audio");
+
+    media.preload = "metadata";
+    media.src = url;
+
+    try {
+      await new Promise((resolve, reject) => {
+        const onLoaded = () => {
+          cleanup();
+          resolve();
+        };
+
+        const onError = () => {
+          cleanup();
+          reject(
+            new Error(
+              "The selected media file could not be read."
+            )
+          );
+        };
+
+        const cleanup = () => {
+          media.removeEventListener(
+            "loadedmetadata",
+            onLoaded
+          );
+
+          media.removeEventListener(
+            "error",
+            onError
+          );
+        };
+
+        media.addEventListener(
+          "loadedmetadata",
+          onLoaded,
+          { once: true }
+        );
+
+        media.addEventListener(
+          "error",
+          onError,
+          { once: true }
+        );
+
+        media.load();
+      });
+
+      if (!Number.isFinite(media.duration)) {
+        throw new Error(
+          "The selected media file has no readable duration."
+        );
+      }
+
+      return media.duration;
+    } finally {
+      media.removeAttribute("src");
+      media.load();
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  async function normalizeAudioBuffer(audioBuffer) {
+    const OfflineAudioContextCtor =
+      getOfflineAudioContextConstructor();
+
+    if (!OfflineAudioContextCtor) {
+      throw new Error(
+        "Your browser cannot prepare this audio file for analysis. Please try another supported audio format."
+      );
+    }
+
+    const frameCount = Math.max(
+      1,
+      Math.ceil(
+        audioBuffer.duration *
+          targetSampleRate
+      )
+    );
+
+    const offlineContext =
+      new OfflineAudioContextCtor(
+        1,
+        frameCount,
+        targetSampleRate
+      );
+
+    // Downmix all source channels to mono.
+    const monoBuffer =
+      offlineContext.createBuffer(
+        1,
+        audioBuffer.length,
+        audioBuffer.sampleRate
+      );
+
+    const monoSamples =
+      monoBuffer.getChannelData(0);
+
+    const channelCount = Math.max(
+      1,
+      audioBuffer.numberOfChannels
+    );
+
+    for (
+      let channel = 0;
+      channel < channelCount;
+      channel += 1
+    ) {
+      const channelSamples =
+        audioBuffer.getChannelData(channel);
+
+      for (
+        let index = 0;
+        index < channelSamples.length;
+        index += 1
+      ) {
+        monoSamples[index] +=
+          channelSamples[index] /
+          channelCount;
+      }
+    }
+
+    const bufferSource =
+      offlineContext.createBufferSource();
+
+    bufferSource.buffer = monoBuffer;
+    bufferSource.connect(
+      offlineContext.destination
+    );
+
+    bufferSource.start(0);
+
+    const rendered =
+      await offlineContext.startRendering();
+
+    return rendered
+      .getChannelData(0)
+      .slice();
+  }
+
+  async function decodeUploadedFile(file) {
+    const AudioContextCtor =
+      getAudioContextConstructor();
+
+    if (!AudioContextCtor) {
+      throw new Error(
+        "Your browser cannot decode this audio file. Please try another supported format or use the microphone."
+      );
+    }
+
+    let decodingContext = null;
+
+    try {
+      decodingContext =
+        new AudioContextCtor();
+
+      const arrayBuffer =
+        await file.arrayBuffer();
+
+      const decoded =
+        await decodingContext.decodeAudioData(
+          arrayBuffer
+        );
+
+      if (
+        !decoded ||
+        !decoded.length ||
+        !decoded.duration
+      ) {
+        throw new Error(
+          "The selected audio file is empty or has no audio track."
+        );
+      }
+
+      if (
+        decoded.duration >
+        maxSeconds + 0.25
+      ) {
+        throw new Error(
+          `Audio must be ${maxSeconds} seconds or less.`
+        );
+      }
+
+      return await normalizeAudioBuffer(
+        decoded
+      );
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message
+      ) {
+        throw error;
+      }
+
+      throw new Error(
+        "reotoi could not decode this file in your browser. Try MP3, OGG, MP4/M4A, WAV, FLAC or WebM."
+      );
+    } finally {
+      if (decodingContext) {
+        decodingContext
+          .close()
+          .catch(() => {});
+      }
+    }
+  }
+
+  async function prepareMicrophoneSamples(
+    samples,
+    sampleRate
+  ) {
+    const AudioContextCtor =
+      getAudioContextConstructor();
+
+    if (!AudioContextCtor) {
+      throw new Error(
+        "Your browser cannot prepare the microphone recording."
+      );
+    }
+
+    const context =
+      new AudioContextCtor();
+
+    try {
+      const buffer =
+        context.createBuffer(
+          1,
+          samples.length,
+          sampleRate
+        );
+
+      buffer.copyToChannel(
+        samples,
+        0
+      );
+
+      return await normalizeAudioBuffer(
+        buffer
+      );
+    } finally {
+      context.close().catch(() => {});
+    }
+  }
+
+  function setRecordingReadyStatus(
+    message = "Recording ready"
+  ) {
+    if (recorderStatus) {
+      recorderStatus.textContent =
+        message;
+    }
+
+    if (recorderHelp) {
+      recorderHelp.textContent =
+        "Your microphone recording is ready to become artwork.";
+    }
+  }
+
   async function startRecording() {
     setError("");
+
     source = null;
+    preparingAudio = false;
 
     if (audioFileInput) {
       audioFileInput.value = "";
@@ -237,7 +581,8 @@
     elapsed = 0;
 
     if (recorderTimer) {
-      recorderTimer.textContent = formatTime(0);
+      recorderTimer.textContent =
+        formatTime(0);
     }
 
     updateGenerateState();
@@ -267,17 +612,20 @@
     }
 
     try {
-      audioContext = new AudioContextCtor();
+      audioContext =
+        new AudioContextCtor();
 
       mediaStream =
-        await navigator.mediaDevices.getUserMedia({
-          audio: {
-            channelCount: 1,
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
-        });
+        await navigator.mediaDevices.getUserMedia(
+          {
+            audio: {
+              channelCount: 1,
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+            },
+          }
+        );
 
       await audioContext.resume();
 
@@ -298,23 +646,34 @@
 
       silentGain.gain.value = 0;
 
-      processorNode.onaudioprocess = (event) => {
-        if (!recording) return;
+      processorNode.onaudioprocess =
+        (event) => {
+          if (!recording) return;
 
-        const input =
-          event.inputBuffer.getChannelData(0);
+          const input =
+            event.inputBuffer
+              .getChannelData(0);
 
-        const copy =
-          new Float32Array(input.length);
+          const copy =
+            new Float32Array(
+              input.length
+            );
 
-        copy.set(input);
+          copy.set(input);
 
-        recordedSamples.push(copy);
-        recordedSampleCount += copy.length;
-      };
+          recordedSamples.push(copy);
+          recordedSampleCount +=
+            copy.length;
+        };
 
-      sourceNode.connect(processorNode);
-      processorNode.connect(silentGain);
+      sourceNode.connect(
+        processorNode
+      );
+
+      processorNode.connect(
+        silentGain
+      );
+
       silentGain.connect(
         audioContext.destination
       );
@@ -322,7 +681,9 @@
       recording = true;
 
       if (recorder) {
-        recorder.classList.add("is-recording");
+        recorder.classList.add(
+          "is-recording"
+        );
       }
 
       if (recordLabel) {
@@ -340,18 +701,22 @@
           `Speak naturally. Recording stops automatically at ${maxSeconds} seconds.`;
       }
 
-      timerId = window.setInterval(() => {
-        elapsed += 1;
+      timerId =
+        window.setInterval(() => {
+          elapsed += 1;
 
-        if (recorderTimer) {
-          recorderTimer.textContent =
-            formatTime(elapsed);
-        }
+          if (recorderTimer) {
+            recorderTimer.textContent =
+              formatTime(elapsed);
+          }
 
-        if (elapsed >= maxSeconds) {
-          stopRecording();
-        }
-      }, 1000);
+          if (
+            elapsed >=
+            maxSeconds
+          ) {
+            stopRecording();
+          }
+        }, 1000);
     } catch (error) {
       console.error(
         "Microphone initialization failed:",
@@ -381,27 +746,35 @@
     }
   }
 
-  function stopRecording() {
-    if (!recording) return;
+  async function stopRecording() {
+    if (!recording || preparingAudio) {
+      return;
+    }
 
     recording = false;
     stopTimer();
 
     const sampleRate =
-      audioContext?.sampleRate || 44100;
+      audioContext?.sampleRate ||
+      44100;
 
-    const samples = mergeBuffers(
-      recordedSamples,
-      recordedSampleCount
-    );
+    const samples =
+      mergeBuffers(
+        recordedSamples,
+        recordedSampleCount
+      );
 
     const duration =
-      samples.length / sampleRate;
+      samples.length /
+      sampleRate;
 
     cleanupAudioGraph();
     resetRecordingVisuals();
 
-    if (!samples.length || duration < 0.2) {
+    if (
+      !samples.length ||
+      duration < 0.2
+    ) {
       if (recorderStatus) {
         recorderStatus.textContent =
           "No usable recording";
@@ -420,26 +793,82 @@
       return;
     }
 
-    const wavBlob =
-      encodeWav(samples, sampleRate);
+    if (
+      duration >
+      maxSeconds + 0.25
+    ) {
+      setError(
+        `Audio must be ${maxSeconds} seconds or less.`
+      );
 
-    source = {
-      type: "microphone",
-      blob: wavBlob,
-      filename: `reotoi-${Date.now()}.wav`,
-    };
+      updateGenerateState();
+      return;
+    }
+
+    preparingAudio = true;
+    updateGenerateState();
 
     if (recorderStatus) {
       recorderStatus.textContent =
-        "Recording ready";
+        "Preparing recording";
     }
 
     if (recorderHelp) {
       recorderHelp.textContent =
-        "Your microphone recording is ready to become artwork.";
+        "Preparing the recording for secure voice analysis…";
     }
 
-    updateGenerateState();
+    try {
+      const normalizedSamples =
+        await prepareMicrophoneSamples(
+          samples,
+          sampleRate
+        );
+
+      const wavBlob =
+        encodeWav(
+          normalizedSamples,
+          targetSampleRate
+        );
+
+      source = {
+        type: "microphone",
+        blob: wavBlob,
+        filename:
+          `reotoi-${Date.now()}.wav`,
+      };
+
+      setRecordingReadyStatus();
+      updateGenerateState();
+    } catch (error) {
+      console.error(
+        "Microphone preparation failed:",
+        error
+      );
+
+      source = null;
+
+      setError(
+        error instanceof Error
+          ? error.message
+          : "reotoi could not prepare the microphone recording. Please try again."
+      );
+
+      if (recorderStatus) {
+        recorderStatus.textContent =
+          "Recording unavailable";
+      }
+
+      if (recorderHelp) {
+        recorderHelp.textContent =
+          "Please record again or use an audio file instead.";
+      }
+
+      updateGenerateState();
+    } finally {
+      preparingAudio = false;
+      updateGenerateState();
+    }
   }
 
   if (recordButton) {
@@ -456,18 +885,18 @@
   }
 
   /*
-   * AUDIO FILE FALLBACK
+   * AUDIO FILE INPUT
    *
-   * Important:
-   * Do not decode or convert the uploaded file in the browser.
-   * The original file is sent to FastAPI so the server-side
-   * audio normalization layer can handle MP3, M4A, WAV,
-   * OGG, FLAC, and other supported formats.
+   * The original file may be MP3, OGG, MP4/M4A, WAV, FLAC, WebM, AAC, etc.
+   * The browser decodes it with Web Audio, downmixes/resamples it to mono
+   * 16 kHz PCM, and sends the resulting WAV to FastAPI.
+   *
+   * FFmpeg is not used.
    */
   if (audioFileInput) {
     audioFileInput.addEventListener(
       "change",
-      () => {
+      async () => {
         setError("");
 
         const file =
@@ -476,6 +905,7 @@
         if (!file) return;
 
         recording = false;
+        preparingAudio = false;
 
         stopTimer();
         cleanupAudioGraph();
@@ -484,9 +914,36 @@
         source = null;
         updateGenerateState();
 
-        if (file.size > maxUploadBytes) {
+        if (!isSupportedInputFile(file)) {
           if (fileName) {
-            fileName.textContent = "";
+            fileName.textContent =
+              "";
+          }
+
+          if (recorderStatus) {
+            recorderStatus.textContent =
+              "Unsupported audio file";
+          }
+
+          if (recorderHelp) {
+            recorderHelp.textContent =
+              "Choose MP3, OGG, MP4/M4A, WAV, FLAC, WebM or another browser-supported audio file.";
+          }
+
+          setError(
+            "This file type is not supported. Use MP3, OGG, MP4/M4A, WAV, FLAC or WebM."
+          );
+
+          return;
+        }
+
+        if (
+          file.size >
+          maxUploadBytes
+        ) {
+          if (fileName) {
+            fileName.textContent =
+              "";
           }
 
           if (recorderStatus) {
@@ -506,34 +963,110 @@
           return;
         }
 
-        /*
-         * Preserve the original file and MIME type.
-         * Do not rename it to .wav.
-         */
-        source = {
-          type: "upload",
-          blob: file,
-          filename: file.name,
-          originalFilename: file.name,
-          contentType: file.type || "",
-        };
-
         if (fileName) {
           fileName.textContent =
             file.name;
         }
 
+        preparingAudio = true;
+        updateGenerateState();
+
         if (recorderStatus) {
           recorderStatus.textContent =
-            "Audio file ready";
+            "Reading audio file";
         }
 
         if (recorderHelp) {
           recorderHelp.textContent =
-            "The audio file is ready to be analyzed.";
+            "Decoding the file in your browser and preparing it for analysis…";
         }
 
-        updateGenerateState();
+        try {
+          const metadataDuration =
+            await getMediaDuration(
+              file
+            );
+
+          if (
+            metadataDuration >
+            maxSeconds + 0.25
+          ) {
+            throw new Error(
+              `Audio must be ${maxSeconds} seconds or less.`
+            );
+          }
+
+          const normalizedSamples =
+            await decodeUploadedFile(
+              file
+            );
+
+          const wavBlob =
+            encodeWav(
+              normalizedSamples,
+              targetSampleRate
+            );
+
+          if (
+            wavBlob.size >
+            4 * 1024 * 1024
+          ) {
+            throw new Error(
+              "The normalized audio file is too large to process. Please choose a shorter recording."
+            );
+          }
+
+          source = {
+            type: "upload",
+            blob: wavBlob,
+            filename:
+              `reotoi-upload-${Date.now()}.wav`,
+            originalFilename:
+              file.name,
+            contentType:
+              file.type || "",
+          };
+
+          if (recorderStatus) {
+            recorderStatus.textContent =
+              "Audio file ready";
+          }
+
+          if (recorderHelp) {
+            recorderHelp.textContent =
+              "The audio file is ready to be analyzed.";
+          }
+
+          updateGenerateState();
+        } catch (error) {
+          console.error(
+            "Audio file preparation failed:",
+            error
+          );
+
+          source = null;
+
+          if (recorderStatus) {
+            recorderStatus.textContent =
+              "Audio file unavailable";
+          }
+
+          if (recorderHelp) {
+            recorderHelp.textContent =
+              "Try another supported file or use the microphone instead.";
+          }
+
+          const message =
+            error instanceof Error
+              ? error.message
+              : "reotoi could not read this audio file in your browser.";
+
+          setError(message);
+          updateGenerateState();
+        } finally {
+          preparingAudio = false;
+          updateGenerateState();
+        }
       }
     );
   }
@@ -552,9 +1085,8 @@
     ];
 
     labels.forEach((key) => {
-      const value = Number(
-        dna?.[key] ?? 0
-      );
+      const value =
+        Number(dna?.[key] ?? 0);
 
       const clamped =
         Math.max(
@@ -563,12 +1095,17 @@
         );
 
       const row =
-        document.createElement("div");
+        document.createElement(
+          "div"
+        );
 
-      row.className = "dna-row";
+      row.className =
+        "dna-row";
 
       const label =
-        document.createElement("span");
+        document.createElement(
+          "span"
+        );
 
       label.className =
         "dna-row__label";
@@ -578,7 +1115,9 @@
         key.slice(1);
 
       const track =
-        document.createElement("span");
+        document.createElement(
+          "span"
+        );
 
       track.className =
         "dna-row__track";
@@ -589,7 +1128,9 @@
       );
 
       const fill =
-        document.createElement("span");
+        document.createElement(
+          "span"
+        );
 
       fill.className =
         "dna-row__fill";
@@ -600,7 +1141,9 @@
       track.appendChild(fill);
 
       const displayValue =
-        document.createElement("span");
+        document.createElement(
+          "span"
+        );
 
       displayValue.className =
         "dna-row__value";
@@ -622,7 +1165,8 @@
     latestResult = data;
 
     if (resultSection) {
-      resultSection.hidden = false;
+      resultSection.hidden =
+        false;
     }
 
     if (resultMessage) {
@@ -634,13 +1178,18 @@
     if (resultTheme) {
       resultTheme.textContent =
         String(
-          data.theme || "surprise"
-        ).replaceAll("-", " ");
+          data.theme ||
+            "surprise"
+        ).replaceAll(
+          "-",
+          " "
+        );
     }
 
     if (resultInput) {
       resultInput.textContent =
-        data.input_source === "upload"
+        data.input_source ===
+        "upload"
           ? "Audio file"
           : "Microphone";
     }
@@ -658,19 +1207,26 @@
         data.artwork_url;
 
       artworkImage.alt =
-        data.input_source === "upload"
+        data.input_source ===
+        "upload"
           ? "Artwork generated from the uploaded audio file"
           : "Artwork generated from the microphone recording";
 
-      artworkImage.hidden = false;
-      artworkPlaceholder.hidden = true;
+      artworkImage.hidden =
+        false;
+
+      artworkPlaceholder.hidden =
+        true;
 
       if (downloadButton) {
         downloadButton.href =
           data.artwork_url;
 
         downloadButton.download =
-          `${data.artwork_id || "reotoi-artwork"}.svg`;
+          `${
+            data.artwork_id ||
+            "reotoi-artwork"
+          }.svg`;
 
         downloadButton.classList.remove(
           "is-disabled"
@@ -686,7 +1242,8 @@
           "src"
         );
 
-        artworkImage.hidden = true;
+        artworkImage.hidden =
+          true;
       }
 
       if (artworkPlaceholder) {
@@ -721,14 +1278,18 @@
     }
 
     if (resultSection) {
-      resultSection.scrollIntoView({
-        behavior: "smooth",
-        block: "start",
-      });
+      resultSection.scrollIntoView(
+        {
+          behavior: "smooth",
+          block: "start",
+        }
+      );
     }
   }
 
-  async function parseResponse(response) {
+  async function parseResponse(
+    response
+  ) {
     const contentType =
       response.headers.get(
         "content-type"
@@ -757,31 +1318,28 @@
     setError("");
 
     if (saveStatus) {
-      saveStatus.textContent = "";
+      saveStatus.textContent =
+        "";
     }
 
     if (!source?.blob) {
       setError(
         "Record your voice or choose an audio file first."
       );
+
       return;
     }
 
     const form =
       new FormData();
 
-    /*
-     * Microphone:
-     *   WAV blob + .wav filename
-     *
-     * Upload:
-     *   Original file + original filename
-     */
+    // Both microphone and uploaded media are normalized to WAV in the browser
+    // before they reach FastAPI.
     form.append(
       "audio",
       source.blob,
       source.filename ||
-        "reotoi-audio"
+        "reotoi-audio.wav"
     );
 
     form.append(
@@ -795,7 +1353,9 @@
     );
 
     if (generateButton) {
-      generateButton.disabled = true;
+      generateButton.disabled =
+        true;
+
       generateButton.textContent =
         "Creating…";
     }
@@ -828,14 +1388,14 @@
       if (!response.ok) {
         throw new Error(
           payload.detail ||
-          "reotoi could not create the artwork. Please try again."
+            "reotoi could not create the artwork. Please try again."
         );
       }
 
       if (!payload.success) {
         throw new Error(
           payload.detail ||
-          "reotoi could not create the artwork. Please try again."
+            "reotoi could not create the artwork. Please try again."
         );
       }
 
@@ -901,7 +1461,8 @@
           return;
         }
 
-        saveButton.disabled = true;
+        saveButton.disabled =
+          true;
 
         if (saveStatus) {
           saveStatus.textContent =
@@ -953,7 +1514,7 @@
           if (!response.ok) {
             throw new Error(
               payload.detail ||
-              "The artwork could not be saved."
+                "The artwork could not be saved."
             );
           }
 
