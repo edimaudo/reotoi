@@ -41,8 +41,8 @@
   const mimeToExtension = {
     "audio/mpeg": ".mp3",
     "audio/mp3": ".mp3",
-    "audio/ogg": ".ogg",
     "application/ogg": ".ogg",
+    "audio/ogg": ".ogg",
     "audio/wav": ".wav",
     "audio/wave": ".wav",
     "audio/x-wav": ".wav",
@@ -81,6 +81,49 @@
   const saveButton = document.getElementById("save-button");
   const saveStatus = document.getElementById("save-status");
 
+  // The creation page depends on these elements. Fail cleanly if the template
+  // is out of sync instead of throwing "Cannot set properties of null" later.
+  const requiredElements = {
+    recorder,
+    recordButton,
+    recordLabel,
+    recorderStatus,
+    recorderTimer,
+    recorderHelp,
+    generateButton,
+    audioFileInput,
+    fileName,
+    formError,
+    resultSection,
+    resultMessage,
+    resultTheme,
+    resultInput,
+    voiceDnaBars,
+    artworkImage,
+    artworkPlaceholder,
+    downloadButton,
+    saveButton,
+    saveStatus,
+  };
+
+  const missingElements = Object.entries(requiredElements)
+    .filter(([, element]) => !element)
+    .map(([name]) => name);
+
+  if (missingElements.length > 0) {
+    console.error(
+      "reotoi app initialization failed. Missing DOM elements:",
+      missingElements
+    );
+    return;
+  }
+
+  function setElementText(element, value) {
+    if (element) {
+      element.textContent = value ?? "";
+    }
+  }
+
   let audioContext = null;
   let mediaStream = null;
   let sourceNode = null;
@@ -114,7 +157,7 @@
   function setError(message) {
     if (!formError) return;
 
-    formError.textContent = message || "";
+    setElementText(formError, message || "");
     formError.hidden = !message;
   }
 
@@ -199,7 +242,7 @@
     }
 
     if (recordLabel) {
-      recordLabel.textContent = "Start speaking";
+      setElementText(recordLabel, "Start speaking");
     }
   }
 
@@ -252,8 +295,7 @@
 
     for (let i = 0; i < samples.length; i += 1) {
       const sample = Math.max(-1, Math.min(1, samples[i]));
-      const pcm =
-        sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+      const pcm = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
 
       view.setInt16(offset, pcm, true);
       offset += 2;
@@ -384,7 +426,7 @@
 
     if (!AudioContextCtor) {
       throw new Error(
-        "Your browser cannot decode this audio file. Please use MP3, OGG, FLAC or WAV instead."
+        "Your browser cannot decode this audio file. Please use MP3, OGG, FLAC, WAV, MP4, M4A or WebM."
       );
     }
 
@@ -398,15 +440,10 @@
 
       return await normalizeAudioBuffer(decoded);
     } catch (error) {
-      console.error(
-        "Browser audio decoding failed:",
-        error
-      );
+      console.error("Browser audio decoding failed:", error);
 
       throw new Error(
-        `reotoi could not decode ${
-          file.name || "this audio file"
-        }. The format or codec is not supported by this browser.`
+        `reotoi could not decode ${file.name || "this audio file"}. The format or codec is not supported by this browser.`
       );
     } finally {
       if (decodingContext) {
@@ -440,8 +477,7 @@
       originalFilename: file.name || "audio file",
       contentType: "audio/wav",
       format: ".wav",
-      normalizedFrom:
-        resolveExtension(file) || getMimeType(file),
+      normalizedFrom: resolveExtension(file) || getMimeType(file),
     };
   }
 
@@ -461,11 +497,8 @@
       return {
         type: "upload",
         blob: file,
-        filename:
-          file.name ||
-          `reotoi-upload-${Date.now()}.audio`,
-        originalFilename:
-          file.name || "audio file",
+        filename: file.name || `reotoi-upload-${Date.now()}.audio`,
+        originalFilename: file.name || "audio file",
         contentType: file.type || "",
         format: resolveExtension(file),
       };
@@ -473,17 +506,13 @@
 
     /*
      * MP4/M4A/WebM/AAC and other browser-supported media are decoded in the
-     * browser and converted to mono 16 kHz PCM WAV. No external codec runtime.
+     * browser and converted to mono 16 kHz PCM WAV. No external codec runtime is involved.
      */
     return prepareBrowserAudio(file, token);
   }
 
-  async function prepareMicrophoneSamples(
-    samples,
-    sampleRate
-  ) {
-    const AudioContextCtor =
-      getAudioContextConstructor();
+  async function prepareMicrophoneSamples(samples, sampleRate) {
+    const AudioContextCtor = getAudioContextConstructor();
 
     if (!AudioContextCtor) {
       throw new Error(
@@ -491,25 +520,18 @@
       );
     }
 
-    const context =
-      new AudioContextCtor();
+    const context = new AudioContextCtor();
 
     try {
-      const buffer =
-        context.createBuffer(
-          1,
-          samples.length,
-          sampleRate
-        );
-
-      buffer.copyToChannel(
-        samples,
-        0
+      const buffer = context.createBuffer(
+        1,
+        samples.length,
+        sampleRate
       );
 
-      return await normalizeAudioBuffer(
-        buffer
-      );
+      buffer.copyToChannel(samples, 0);
+
+      return await normalizeAudioBuffer(buffer);
     } finally {
       context.close().catch(() => {});
     }
@@ -522,40 +544,31 @@
     source = null;
     preparingAudio = false;
 
-    if (audioFileInput) {
-      audioFileInput.value = "";
-    }
-
-    if (fileName) {
-      fileName.textContent = "";
-    }
+    if (audioFileInput) audioFileInput.value = "";
+    setElementText(fileName, "");
 
     recordedSamples = [];
     recordedSampleCount = 0;
     elapsed = 0;
 
     if (recorderTimer) {
-      recorderTimer.textContent =
-        formatTime(0);
+      setElementText(recorderTimer, formatTime(0));
     }
 
     updateGenerateState();
 
-    const AudioContextCtor =
-      getAudioContextConstructor();
+    const AudioContextCtor = getAudioContextConstructor();
 
-    if (
-      !navigator.mediaDevices?.getUserMedia ||
-      !AudioContextCtor
-    ) {
+    if (!navigator.mediaDevices?.getUserMedia || !AudioContextCtor) {
       if (recorderStatus) {
-        recorderStatus.textContent =
-          "Microphone unavailable";
+        setElementText(recorderStatus, "Microphone unavailable");
       }
 
       if (recorderHelp) {
-        recorderHelp.textContent =
-          "Your browser cannot record from a microphone. Use an audio file instead.";
+        setElementText(
+          recorderHelp,
+          "Your browser cannot record from a microphone. Use an audio file instead."
+        );
       }
 
       setError(
@@ -566,127 +579,79 @@
     }
 
     try {
-      audioContext =
-        new AudioContextCtor();
+      audioContext = new AudioContextCtor();
 
-      mediaStream =
-        await navigator.mediaDevices.getUserMedia({
-          audio: {
-            channelCount: 1,
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
-        });
+      mediaStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
 
       await audioContext.resume();
 
-      sourceNode =
-        audioContext.createMediaStreamSource(
-          mediaStream
-        );
-
-      processorNode =
-        audioContext.createScriptProcessor(
-          4096,
-          1,
-          1
-        );
-
-      silentGain =
-        audioContext.createGain();
-
+      sourceNode = audioContext.createMediaStreamSource(mediaStream);
+      processorNode = audioContext.createScriptProcessor(4096, 1, 1);
+      silentGain = audioContext.createGain();
       silentGain.gain.value = 0;
 
-      processorNode.onaudioprocess =
-        (event) => {
-          if (!recording) return;
+      processorNode.onaudioprocess = (event) => {
+        if (!recording) return;
 
-          const input =
-            event.inputBuffer.getChannelData(
-              0
-            );
+        const input = event.inputBuffer.getChannelData(0);
+        const copy = new Float32Array(input.length);
 
-          const copy =
-            new Float32Array(
-              input.length
-            );
+        copy.set(input);
+        recordedSamples.push(copy);
+        recordedSampleCount += copy.length;
+      };
 
-          copy.set(input);
-          recordedSamples.push(copy);
-          recordedSampleCount += copy.length;
-        };
-
-      sourceNode.connect(
-        processorNode
-      );
-
-      processorNode.connect(
-        silentGain
-      );
-
-      silentGain.connect(
-        audioContext.destination
-      );
+      sourceNode.connect(processorNode);
+      processorNode.connect(silentGain);
+      silentGain.connect(audioContext.destination);
 
       recording = true;
 
-      if (recorder) {
-        recorder.classList.add(
-          "is-recording"
+      if (recorder) recorder.classList.add("is-recording");
+      setElementText(recordLabel, "Stop speaking");
+      setElementText(recorderStatus, "Recording");
+
+      if (recorderHelp) {
+        setElementText(
+          recorderHelp,
+          `Speak naturally. Recording stops automatically at ${maxSeconds} seconds.`
         );
       }
 
-      if (recordLabel) {
-        recordLabel.textContent =
-          "Stop speaking";
-      }
+      timerId = window.setInterval(() => {
+        elapsed += 1;
 
-      if (recorderStatus) {
-        recorderStatus.textContent =
-          "Recording";
-      }
+        if (recorderTimer) {
+          setElementText(recorderTimer, formatTime(elapsed));
+        }
 
-      if (recorderHelp) {
-        recorderHelp.textContent =
-          `Speak naturally. Recording stops automatically at ${maxSeconds} seconds.`;
-      }
-
-      timerId =
-        window.setInterval(() => {
-          elapsed += 1;
-
-          if (recorderTimer) {
-            recorderTimer.textContent =
-              formatTime(elapsed);
-          }
-
-          if (
-            elapsed >=
-            maxSeconds
-          ) {
-            void stopRecording();
-          }
-        }, 1000);
+        if (elapsed >= maxSeconds) {
+          void stopRecording();
+        }
+      }, 1000);
     } catch (error) {
-      console.error(
-        "Microphone initialization failed:",
-        error
-      );
+      console.error("Microphone initialization failed:", error);
 
       recording = false;
-
       cleanupAudioGraph();
       resetRecordingVisuals();
 
       if (recorderStatus) {
-        recorderStatus.textContent =
-          "Microphone unavailable";
+        setElementText(recorderStatus, "Microphone unavailable");
       }
 
       if (recorderHelp) {
-        recorderHelp.textContent =
-          "Allow microphone access or use an audio file instead.";
+        setElementText(
+          recorderHelp,
+          "Allow microphone access or use an audio file instead."
+        );
       }
 
       setError(
@@ -698,45 +663,31 @@
   }
 
   async function stopRecording() {
-    if (
-      !recording ||
-      preparingAudio
-    ) {
-      return;
-    }
+    if (!recording || preparingAudio) return;
 
     recording = false;
     stopTimer();
 
-    const sampleRate =
-      audioContext?.sampleRate ||
-      44100;
-
-    const samples =
-      mergeBuffers(
-        recordedSamples,
-        recordedSampleCount
-      );
-
-    const duration =
-      samples.length /
-      sampleRate;
+    const sampleRate = audioContext?.sampleRate || 44100;
+    const samples = mergeBuffers(
+      recordedSamples,
+      recordedSampleCount
+    );
+    const duration = samples.length / sampleRate;
 
     cleanupAudioGraph();
     resetRecordingVisuals();
 
-    if (
-      !samples.length ||
-      duration < 0.2
-    ) {
+    if (!samples.length || duration < 0.2) {
       if (recorderStatus) {
-        recorderStatus.textContent =
-          "No usable recording";
+        setElementText(recorderStatus, "No usable recording");
       }
 
       if (recorderHelp) {
-        recorderHelp.textContent =
-          "Please speak for a little longer and try again.";
+        setElementText(
+          recorderHelp,
+          "Please speak for a little longer and try again."
+        );
       }
 
       setError(
@@ -747,58 +698,41 @@
       return;
     }
 
-    if (
-      duration >
-      maxSeconds + 0.25
-    ) {
-      setError(
-        `Audio must be ${maxSeconds} seconds or less.`
-      );
-
+    if (duration > maxSeconds + 0.25) {
+      setError(`Audio must be ${maxSeconds} seconds or less.`);
       updateGenerateState();
       return;
     }
 
-    const token =
-      ++preparationToken;
-
+    const token = ++preparationToken;
     preparingAudio = true;
     updateGenerateState();
 
     if (recorderStatus) {
-      recorderStatus.textContent =
-        "Preparing recording";
+      setElementText(recorderStatus, "Preparing recording");
     }
 
     if (recorderHelp) {
-      recorderHelp.textContent =
-        "Preparing the recording for voice analysis…";
+      setElementText(
+        recorderHelp,
+        "Preparing the recording for voice analysis…"
+      );
     }
 
     try {
-      const normalizedSamples =
-        await prepareMicrophoneSamples(
-          samples,
-          sampleRate
-        );
+      const normalizedSamples = await prepareMicrophoneSamples(
+        samples,
+        sampleRate
+      );
 
-      if (
-        token !==
-        preparationToken
-      ) {
-        return;
-      }
+      if (token !== preparationToken) return;
 
-      const wavBlob =
-        encodeWav(
-          normalizedSamples,
-          targetSampleRate
-        );
+      const wavBlob = encodeWav(
+        normalizedSamples,
+        targetSampleRate
+      );
 
-      if (
-        wavBlob.size >
-        maxServerBytes
-      ) {
+      if (wavBlob.size > maxServerBytes) {
         throw new Error(
           "The prepared recording is too large to process. Please record a shorter sample."
         );
@@ -807,35 +741,25 @@
       source = {
         type: "microphone",
         blob: wavBlob,
-        filename:
-          `reotoi-${Date.now()}.wav`,
-        contentType:
-          "audio/wav",
+        filename: `reotoi-${Date.now()}.wav`,
+        contentType: "audio/wav",
         format: ".wav",
       };
 
       if (recorderStatus) {
-        recorderStatus.textContent =
-          "Recording ready";
+        setElementText(recorderStatus, "Recording ready");
       }
 
       if (recorderHelp) {
-        recorderHelp.textContent =
-          "Your microphone recording is ready to become artwork.";
+        setElementText(
+          recorderHelp,
+          "Your microphone recording is ready to become artwork."
+        );
       }
     } catch (error) {
-      if (
-        token !==
-        preparationToken
-      ) {
-        return;
-      }
+      if (token !== preparationToken) return;
 
-      console.error(
-        "Microphone preparation failed:",
-        error
-      );
-
+      console.error("Microphone preparation failed:", error);
       source = null;
 
       setError(
@@ -845,19 +769,17 @@
       );
 
       if (recorderStatus) {
-        recorderStatus.textContent =
-          "Recording unavailable";
+        setElementText(recorderStatus, "Recording unavailable");
       }
 
       if (recorderHelp) {
-        recorderHelp.textContent =
-          "Please record again or use an audio file instead.";
+        setElementText(
+          recorderHelp,
+          "Please record again or use an audio file instead."
+        );
       }
     } finally {
-      if (
-        token ===
-        preparationToken
-      ) {
+      if (token === preparationToken) {
         preparingAudio = false;
         updateGenerateState();
       }
@@ -865,188 +787,149 @@
   }
 
   if (recordButton) {
-    recordButton.addEventListener(
-      "click",
-      () => {
-        if (recording) {
-          void stopRecording();
-        } else {
-          void startRecording();
-        }
+    recordButton.addEventListener("click", () => {
+      if (recording) {
+        void stopRecording();
+      } else {
+        void startRecording();
       }
-    );
+    });
   }
 
   if (audioFileInput) {
-    audioFileInput.addEventListener(
-      "change",
-      async () => {
-        setError("");
+    audioFileInput.addEventListener("change", async () => {
+      setError("");
 
-        const file =
-          audioFileInput.files?.[0];
+      const file = audioFileInput.files?.[0];
+      if (!file) return;
 
-        if (!file) return;
+      const token = ++preparationToken;
 
-        const token =
-          ++preparationToken;
+      recording = false;
+      preparingAudio = false;
+      stopTimer();
+      cleanupAudioGraph();
+      resetRecordingVisuals();
+      source = null;
+      updateGenerateState();
 
-        recording = false;
-        preparingAudio = false;
-
-        stopTimer();
-        cleanupAudioGraph();
-        resetRecordingVisuals();
-
-        source = null;
-
-        updateGenerateState();
-
-        if (
-          !isSupportedInputFile(file)
-        ) {
-          if (fileName) {
-            fileName.textContent =
-              "";
-          }
-
-          if (recorderStatus) {
-            recorderStatus.textContent =
-              "Unsupported audio file";
-          }
-
-          if (recorderHelp) {
-            recorderHelp.textContent =
-              "Choose an MP3, OGG, FLAC, WAV, MP4/M4A, WebM or another browser-supported audio file.";
-          }
-
-          setError(
-            "This file type is not supported by reotoi. Choose an audio format your browser or reotoi can decode."
-          );
-
-          return;
-        }
-
-        if (
-          file.size >
-          maxInputBytes
-        ) {
-          if (fileName) {
-            fileName.textContent =
-              "";
-          }
-
-          if (recorderStatus) {
-            recorderStatus.textContent =
-              "Audio file unavailable";
-          }
-
-          if (recorderHelp) {
-            recorderHelp.textContent =
-              "Choose a file smaller than 20 MB or use the microphone instead.";
-          }
-
-          setError(
-            "Please choose an audio file smaller than 20 MB."
-          );
-
-          return;
-        }
-
-        if (fileName) {
-          fileName.textContent =
-            file.name;
-        }
-
-        preparingAudio = true;
-        updateGenerateState();
-
-        const directToServer =
-          canSendDirectlyToServer(
-            file
-          );
+      if (!isSupportedInputFile(file)) {
+        setElementText(fileName, "");
 
         if (recorderStatus) {
-          recorderStatus.textContent =
-            directToServer
-              ? "Audio file ready"
-              : "Preparing audio file";
+          setElementText(recorderStatus, "Unsupported audio file");
         }
 
         if (recorderHelp) {
-          recorderHelp.textContent =
-            directToServer
-              ? "The audio file is ready to be analyzed."
-              : "Converting the audio track to a format reotoi can analyze…";
+          setElementText(
+            recorderHelp,
+            "Choose an MP3, OGG, FLAC, WAV, MP4/M4A, WebM or another browser-supported audio file."
+          );
         }
 
-        try {
-          const prepared =
-            await prepareUploadedFile(
-              file,
-              token
-            );
+        setError(
+          "This file type is not supported by reotoi. Choose an audio format your browser or reotoi can decode."
+        );
 
-          if (
-            token !==
-              preparationToken ||
-            !prepared
-          ) {
-            return;
-          }
+        return;
+      }
 
-          source = prepared;
+      if (file.size > maxInputBytes) {
+        setElementText(fileName, "");
 
-          if (recorderStatus) {
-            recorderStatus.textContent =
-              "Audio file ready";
-          }
+        if (recorderStatus) {
+          setElementText(recorderStatus, "Audio file unavailable");
+        }
 
-          if (recorderHelp) {
-            recorderHelp.textContent =
-              "The audio file is ready to be analyzed.";
-          }
-        } catch (error) {
-          if (
-            token !==
-            preparationToken
-          ) {
-            return;
-          }
-
-          console.error(
-            "Audio file preparation failed:",
-            error
+        if (recorderHelp) {
+          setElementText(
+            recorderHelp,
+            "Choose a file smaller than 20 MB or use the microphone instead."
           );
+        }
 
-          source = null;
+        setError("Please choose an audio file smaller than 20 MB.");
+        return;
+      }
 
-          if (recorderStatus) {
-            recorderStatus.textContent =
-              "Audio file unavailable";
-          }
+      if (fileName) {
+        setElementText(fileName, file.name);
+      }
 
-          if (recorderHelp) {
-            recorderHelp.textContent =
-              "Try another supported file or use the microphone instead.";
-          }
+      preparingAudio = true;
+      updateGenerateState();
 
-          setError(
-            error instanceof Error
-              ? error.message
-              : "reotoi could not prepare this audio file. Please try another file."
+      const directToServer = canSendDirectlyToServer(file);
+
+      if (recorderStatus) {
+        setElementText(
+          recorderStatus,
+          directToServer ? "Audio file ready" : "Preparing audio file"
+        );
+      }
+
+      if (recorderHelp) {
+        setElementText(
+          recorderHelp,
+          directToServer
+            ? "The audio file is ready to be analyzed."
+            : "Converting the audio track to a format reotoi can analyze…"
+        );
+      }
+
+      try {
+        const prepared = await prepareUploadedFile(
+          file,
+          token
+        );
+
+        if (token !== preparationToken || !prepared) return;
+
+        source = prepared;
+
+        if (recorderStatus) {
+          setElementText(recorderStatus, "Audio file ready");
+        }
+
+        if (recorderHelp) {
+          setElementText(
+            recorderHelp,
+            "The audio file is ready to be analyzed."
           );
-        } finally {
-          if (
-            token ===
-            preparationToken
-          ) {
-            preparingAudio = false;
-            updateGenerateState();
-          }
+        }
+      } catch (error) {
+        if (token !== preparationToken) return;
+
+        console.error(
+          "Audio file preparation failed:",
+          error
+        );
+
+        source = null;
+
+        if (recorderStatus) {
+          setElementText(recorderStatus, "Audio file unavailable");
+        }
+
+        if (recorderHelp) {
+          setElementText(
+            recorderHelp,
+            "Try another supported file or use the microphone instead."
+          );
+        }
+
+        setError(
+          error instanceof Error
+            ? error.message
+            : "reotoi could not prepare this audio file. Please try another file."
+        );
+      } finally {
+        if (token === preparationToken) {
+          preparingAudio = false;
+          updateGenerateState();
         }
       }
-    );
+    });
   }
 
   function renderVoiceDna(dna) {
@@ -1063,78 +946,32 @@
     ];
 
     labels.forEach((key) => {
-      const value =
-        Number(dna?.[key] ?? 0);
+      const value = Number(dna?.[key] ?? 0);
+      const clamped = Math.max(0, Math.min(10, value));
 
-      const clamped =
-        Math.max(
-          0,
-          Math.min(10, value)
-        );
+      const row = document.createElement("div");
+      row.className = "dna-row";
 
-      const row =
-        document.createElement(
-          "div"
-        );
-
-      row.className =
-        "dna-row";
-
-      const label =
-        document.createElement(
-          "span"
-        );
-
-      label.className =
-        "dna-row__label";
-
+      const label = document.createElement("span");
+      label.className = "dna-row__label";
       label.textContent =
-        key.charAt(0).toUpperCase() +
-        key.slice(1);
+        key.charAt(0).toUpperCase() + key.slice(1);
 
-      const track =
-        document.createElement(
-          "span"
-        );
+      const track = document.createElement("span");
+      track.className = "dna-row__track";
+      track.setAttribute("aria-hidden", "true");
 
-      track.className =
-        "dna-row__track";
-
-      track.setAttribute(
-        "aria-hidden",
-        "true"
-      );
-
-      const fill =
-        document.createElement(
-          "span"
-        );
-
-      fill.className =
-        "dna-row__fill";
-
-      fill.style.width =
-        `${clamped * 10}%`;
+      const fill = document.createElement("span");
+      fill.className = "dna-row__fill";
+      fill.style.width = `${clamped * 10}%`;
 
       track.appendChild(fill);
 
-      const displayValue =
-        document.createElement(
-          "span"
-        );
+      const displayValue = document.createElement("span");
+      displayValue.className = "dna-row__value";
+      displayValue.textContent = `${clamped.toFixed(1)}/10`;
 
-      displayValue.className =
-        "dna-row__value";
-
-      displayValue.textContent =
-        `${clamped.toFixed(1)}/10`;
-
-      row.append(
-        label,
-        track,
-        displayValue
-      );
-
+      row.append(label, track, displayValue);
       voiceDnaBars.appendChild(row);
     });
   }
@@ -1143,116 +980,70 @@
     latestResult = data;
 
     if (resultSection) {
-      resultSection.hidden =
-        false;
+      resultSection.hidden = false;
     }
 
     if (resultMessage) {
-      resultMessage.textContent =
-        data.message ||
-        "Your voice has been translated into visual form.";
+      setElementText(
+        resultMessage,
+        data.message || "Your voice has been translated into visual form."
+      );
     }
 
     if (resultTheme) {
-      resultTheme.textContent =
-        String(
-          data.theme ||
-            "surprise"
-        ).replaceAll(
-          "-",
-          " "
-        );
+      setElementText(
+        resultTheme,
+        String(data.theme || "surprise").replaceAll("-", " ")
+      );
     }
 
     if (resultInput) {
-      resultInput.textContent =
-        data.input_source ===
-        "upload"
-          ? "Audio file"
-          : "Microphone";
+      setElementText(
+        resultInput,
+        data.input_source === "upload" ? "Audio file" : "Microphone"
+      );
     }
 
-    renderVoiceDna(
-      data.voice_dna || {}
-    );
+    renderVoiceDna(data.voice_dna || {});
 
-    if (
-      data.artwork_url &&
-      artworkImage &&
-      artworkPlaceholder
-    ) {
-      artworkImage.src =
-        data.artwork_url;
-
+    if (data.artwork_url && artworkImage && artworkPlaceholder) {
+      artworkImage.src = data.artwork_url;
       artworkImage.alt =
-        data.input_source ===
-        "upload"
+        data.input_source === "upload"
           ? "Artwork generated from the uploaded audio file"
           : "Artwork generated from the microphone recording";
 
-      artworkImage.hidden =
-        false;
-
-      artworkPlaceholder.hidden =
-        true;
+      artworkImage.hidden = false;
+      artworkPlaceholder.hidden = true;
 
       if (downloadButton) {
-        downloadButton.href =
-          data.artwork_url;
-
-        downloadButton.download =
-          `${
-            data.artwork_id ||
-            "reotoi-artwork"
-          }.svg`;
-
-        downloadButton.classList.remove(
-          "is-disabled"
-        );
-
-        downloadButton.removeAttribute(
-          "aria-disabled"
-        );
+        downloadButton.href = data.artwork_url;
+        downloadButton.download = `${
+          data.artwork_id || "reotoi-artwork"
+        }.svg`;
+        downloadButton.classList.remove("is-disabled");
+        downloadButton.removeAttribute("aria-disabled");
       }
     } else {
       if (artworkImage) {
-        artworkImage.removeAttribute(
-          "src"
-        );
-
-        artworkImage.hidden =
-          true;
+        artworkImage.removeAttribute("src");
+        artworkImage.hidden = true;
       }
 
       if (artworkPlaceholder) {
-        artworkPlaceholder.hidden =
-          false;
+        artworkPlaceholder.hidden = false;
       }
 
       if (downloadButton) {
-        downloadButton.removeAttribute(
-          "href"
-        );
-
-        downloadButton.removeAttribute(
-          "download"
-        );
-
-        downloadButton.classList.add(
-          "is-disabled"
-        );
-
-        downloadButton.setAttribute(
-          "aria-disabled",
-          "true"
-        );
+        downloadButton.removeAttribute("href");
+        downloadButton.removeAttribute("download");
+        downloadButton.classList.add("is-disabled");
+        downloadButton.setAttribute("aria-disabled", "true");
       }
     }
 
     if (saveButton) {
-      saveButton.disabled =
-        !data.artwork_id ||
-        !data.artwork_url;
+      saveButton.disabled = !data.artwork_id || !data.artwork_url;
     }
 
     if (resultSection) {
@@ -1263,30 +1054,18 @@
     }
   }
 
-  async function parseResponse(
-    response
-  ) {
-    const contentType =
-      response.headers.get(
-        "content-type"
-      ) || "";
+  async function parseResponse(response) {
+    const contentType = response.headers.get("content-type") || "";
 
-    if (
-      contentType.includes(
-        "application/json"
-      )
-    ) {
+    if (contentType.includes("application/json")) {
       return response.json();
     }
 
-    const text =
-      await response.text();
+    const text = await response.text();
 
     return {
       success: false,
-      detail:
-        text ||
-        "reotoi could not process the request.",
+      detail: text || "reotoi could not process the request.",
     };
   }
 
@@ -1294,70 +1073,48 @@
     setError("");
 
     if (saveStatus) {
-      saveStatus.textContent =
-        "";
+      setElementText(saveStatus, "");
     }
 
     if (!source?.blob) {
-      setError(
-        "Record your voice or choose an audio file first."
-      );
-
+      setError("Record your voice or choose an audio file first.");
       return;
     }
 
-    const form =
-      new FormData();
+    const form = new FormData();
 
     form.append(
       "audio",
       source.blob,
-      source.filename ||
-        "reotoi-audio"
+      source.filename || "reotoi-audio"
     );
 
-    form.append(
-      "theme",
-      getTheme()
-    );
-
-    form.append(
-      "input_source",
-      source.type
-    );
+    form.append("theme", getTheme());
+    form.append("input_source", source.type);
 
     if (generateButton) {
-      generateButton.disabled =
-        true;
-
-      generateButton.textContent =
-        "Creating…";
+      generateButton.disabled = true;
+      setElementText(generateButton, "Creating…");
     }
 
     if (recorderStatus) {
-      recorderStatus.textContent =
-        "Creating your artwork";
+      setElementText(recorderStatus, "Creating your artwork");
     }
 
     if (recorderHelp) {
-      recorderHelp.textContent =
-        "Analyzing your voice and translating it into visual form…";
+      setElementText(
+        recorderHelp,
+        "Analyzing your voice and translating it into visual form…"
+      );
     }
 
     try {
-      const response =
-        await fetch(
-          "/generate",
-          {
-            method: "POST",
-            body: form,
-          }
-        );
+      const response = await fetch("/generate", {
+        method: "POST",
+        body: form,
+      });
 
-      const payload =
-        await parseResponse(
-          response
-        );
+      const payload = await parseResponse(response);
 
       if (!response.ok) {
         throw new Error(
@@ -1376,22 +1133,22 @@
       showResult(payload);
 
       if (recorderStatus) {
-        recorderStatus.textContent =
-          source.type ===
-          "upload"
+        setElementText(
+          recorderStatus,
+          source.type === "upload"
             ? "Audio file processed"
-            : "Recording processed";
+            : "Recording processed"
+        );
       }
 
       if (recorderHelp) {
-        recorderHelp.textContent =
-          "Your voice has shaped the artwork shown below.";
+        setElementText(
+          recorderHelp,
+          "Your voice has shaped the artwork shown below."
+        );
       }
     } catch (error) {
-      console.error(
-        "Artwork generation failed:",
-        error
-      );
+      console.error("Artwork generation failed:", error);
 
       setError(
         error instanceof Error
@@ -1400,18 +1157,18 @@
       );
 
       if (recorderStatus) {
-        recorderStatus.textContent =
-          "Artwork not created";
+        setElementText(recorderStatus, "Artwork not created");
       }
 
       if (recorderHelp) {
-        recorderHelp.textContent =
-          "Check the error message and try again.";
+        setElementText(
+          recorderHelp,
+          "Check the error message and try again."
+        );
       }
     } finally {
       if (generateButton) {
-        generateButton.textContent =
-          "Generate artwork";
+        setElementText(generateButton, "Generate artwork");
       }
 
       updateGenerateState();
@@ -1419,122 +1176,81 @@
   }
 
   if (generateButton) {
-    generateButton.addEventListener(
-      "click",
-      () => {
-        void generate();
-      }
-    );
+    generateButton.addEventListener("click", () => {
+      void generate();
+    });
   }
 
   if (saveButton) {
-    saveButton.addEventListener(
-      "click",
-      async () => {
-        if (
-          !latestResult?.artwork_id ||
-          !latestResult?.artwork_url
-        ) {
-          return;
-        }
+    saveButton.addEventListener("click", async () => {
+      if (!latestResult?.artwork_id || !latestResult?.artwork_url) {
+        return;
+      }
 
-        saveButton.disabled =
-          true;
+      saveButton.disabled = true;
+
+      if (saveStatus) {
+        setElementText(saveStatus, "Saving…");
+      }
+
+      const form = new FormData();
+
+      form.append("artwork_id", latestResult.artwork_id);
+      form.append("artwork_url", latestResult.artwork_url);
+      form.append("theme", latestResult.theme || getTheme());
+      form.append(
+        "voice_dna",
+        JSON.stringify(latestResult.voice_dna || {})
+      );
+
+      try {
+        const response = await fetch("/gallery/save", {
+          method: "POST",
+          body: form,
+        });
+
+        const payload = await parseResponse(response);
+
+        if (!response.ok) {
+          throw new Error(
+            payload.detail || "The artwork could not be saved."
+          );
+        }
 
         if (saveStatus) {
-          saveStatus.textContent =
-            "Saving…";
-        }
-
-        const form =
-          new FormData();
-
-        form.append(
-          "artwork_id",
-          latestResult.artwork_id
-        );
-
-        form.append(
-          "artwork_url",
-          latestResult.artwork_url
-        );
-
-        form.append(
-          "theme",
-          latestResult.theme ||
-            getTheme()
-        );
-
-        form.append(
-          "voice_dna",
-          JSON.stringify(
-            latestResult.voice_dna ||
-              {}
-          )
-        );
-
-        try {
-          const response =
-            await fetch(
-              "/gallery/save",
-              {
-                method: "POST",
-                body: form,
-              }
-            );
-
-          const payload =
-            await parseResponse(
-              response
-            );
-
-          if (!response.ok) {
-            throw new Error(
-              payload.detail ||
-                "The artwork could not be saved."
-            );
-          }
-
-          if (saveStatus) {
-            saveStatus.textContent =
-              payload.success
-                ? "Saved to your gallery."
-                : "The artwork could not be saved.";
-          }
-        } catch (error) {
-          console.error(
-            "Gallery save failed:",
-            error
+          setElementText(
+            saveStatus,
+            payload.success
+              ? "Saved to your gallery."
+              : "The artwork could not be saved."
           );
-
-          if (saveStatus) {
-            saveStatus.textContent =
-              error instanceof Error
-                ? error.message
-                : "The artwork could not be saved.";
-          }
-        } finally {
-          saveButton.disabled =
-            false;
         }
+      } catch (error) {
+        console.error("Gallery save failed:", error);
+
+        if (saveStatus) {
+          setElementText(
+            saveStatus,
+            error instanceof Error
+              ? error.message
+              : "The artwork could not be saved."
+          );
+        }
+      } finally {
+        saveButton.disabled = false;
       }
-    );
+    });
   }
 
   if (downloadButton) {
-    downloadButton.addEventListener(
-      "click",
-      (event) => {
-        if (
-          !downloadButton.href ||
-          downloadButton.classList.contains(
-            "is-disabled"
-          )
-        ) {
-          event.preventDefault();
-        }
+    downloadButton.addEventListener("click", (event) => {
+      if (
+        !downloadButton.href ||
+        downloadButton.classList.contains("is-disabled")
+      ) {
+        event.preventDefault();
       }
-    );
+    });
   }
 
   updateGenerateState();
