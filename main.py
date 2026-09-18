@@ -1,12 +1,4 @@
-"""reotoi · voice art — FastAPI web application.
-
-Server-rendered web application. The browser records microphone audio or accepts
-audio media files. Formats supported by the server are decoded directly; other
-supported media containers are normalized by the browser before analysis.
-"""
-
 from __future__ import annotations
-
 import json
 import logging
 import os
@@ -14,7 +6,6 @@ import tempfile
 import uuid
 from pathlib import Path
 from typing import Annotated
-
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -231,8 +222,6 @@ async def generate_voice_art(
     normalized_path = None
 
     try:
-        # audio_conversion.py detects supported formats from the actual uploaded
-        # bytes. Browser-normalized WAV is also accepted through the same path.
         normalized_path = normalize_audio(
             temp_path,
             max_duration_seconds=MAX_RECORDING_SECONDS,
