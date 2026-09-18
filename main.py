@@ -1,10 +1,8 @@
 """reotoi · voice art — FastAPI web application.
 
-This is a server-rendered web app, not an API-first application. The browser
-records microphone audio or accepts a user-selected media file. Browser-side
-media decoding converts supported inputs to a small, mono 16 kHz PCM WAV before
-submission to /generate, so the server does not require FFmpeg or another
-external codec runtime.
+Server-rendered web application. The browser accepts microphone input or a
+user-selected media file, decodes/normalizes the audio, and submits a small
+PCM WAV payload to /generate for analysis.
 """
 
 from __future__ import annotations
@@ -40,15 +38,13 @@ logger = logging.getLogger("reotoi")
 app = FastAPI(
     title="reotoi · voice art",
     description="Turn characteristics of a voice into unique visual artwork.",
-    version="1.1.0",
+    version="1.0.0",
 )
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 MAX_RECORDING_SECONDS = 30
-# The browser converts microphone/file input to mono 16 kHz PCM WAV before
-# posting it. Thirty seconds of this format is only about 1 MB.
 MAX_AUDIO_BYTES = 4 * 1024 * 1024
 MIN_AUDIO_BYTES = 512
 ALLOWED_INPUT_SOURCES = {"microphone", "upload"}
@@ -79,33 +75,18 @@ def validate_input_source(input_source: str) -> str:
     return normalized
 
 
-def validate_processing_audio(audio: UploadFile) -> None:
-    """Validate the browser-normalized WAV sent to the server."""
-    content_type = (audio.content_type or "").lower().split(";", 1)[0].strip()
-    suffix = Path(audio.filename or "").suffix.lower()
-
-    allowed_content_types = {
-        "audio/wav",
-        "audio/wave",
-        "audio/x-wav",
-        "application/wav",
-        "application/x-wav",
-        "application/octet-stream",
-        "",
-    }
-
-    if suffix != ".wav" or content_type not in allowed_content_types:
-        raise HTTPException(
-            status_code=415,
-            detail="reotoi could not process the normalized audio. Please try the recording or file again.",
-        )
-
-
 async def save_audio_temporarily(audio: UploadFile) -> tuple[str, int]:
-    """Stream the browser-normalized WAV to a temporary file."""
-    validate_processing_audio(audio)
+    """Save the browser-normalized WAV payload to a temporary file.
+
+    The server deliberately does not use the browser MIME type to decide what
+    the audio is. The normalization service validates the actual WAV bytes.
+    """
     total = 0
-    handle = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
+    handle = tempfile.NamedTemporaryFile(
+        prefix="reotoi-input-",
+        suffix=".wav",
+        delete=False,
+    )
     temp_path = handle.name
 
     try:
@@ -115,7 +96,7 @@ async def save_audio_temporarily(audio: UploadFile) -> tuple[str, int]:
                 if total > MAX_AUDIO_BYTES:
                     raise HTTPException(
                         status_code=413,
-                        detail="Audio could not be processed because the normalized file is too large.",
+                        detail="The prepared audio is too large to process.",
                     )
                 handle.write(chunk)
 
@@ -131,8 +112,11 @@ async def save_audio_temporarily(audio: UploadFile) -> tuple[str, int]:
         raise
 
 
-def cleanup_temp_file(file_path: str) -> None:
-    """Remove temporary audio after processing."""
+def cleanup_temp_file(file_path: str | None) -> None:
+    """Remove a temporary file if it exists."""
+    if not file_path:
+        return
+
     try:
         os.unlink(file_path)
     except OSError:
@@ -152,6 +136,7 @@ def attach_gallery_cookie(
     """Ensure the anonymous gallery identifier survives browser navigation."""
     if request.cookies.get("reotoi_gallery"):
         return response
+
     response.set_cookie(
         key="reotoi_gallery",
         value=gallery_id or uuid.uuid4().hex,
@@ -181,7 +166,14 @@ async def app_page(request: Request) -> HTMLResponse:
         context={
             "title": "Create artwork",
             "max_recording_seconds": MAX_RECORDING_SECONDS,
-            "themes": ["abstract", "nature", "cosmos", "architecture", "organic", "geometric"],
+            "themes": [
+                "abstract",
+                "nature",
+                "cosmos",
+                "architecture",
+                "organic",
+                "geometric",
+            ],
         },
     )
     return attach_gallery_cookie(request, response)
@@ -205,16 +197,21 @@ async def generate_voice_art(
     input_source: Annotated[str, Form(...)],
     theme: Annotated[str, Form()] = "surprise",
 ) -> JSONResponse:
-    """Process normalized voice audio and return the generated artwork."""
+    """Analyze prepared voice audio and return the generated artwork."""
     validated_theme = validate_theme(theme)
     validated_source = validate_input_source(input_source)
+
     temp_path, byte_count = await save_audio_temporarily(audio)
     normalized_path = None
 
     try:
+        # This is an internal processing step. The browser can accept multiple
+        # user-facing media formats; this function receives the normalized WAV.
         normalized_path = normalize_audio(temp_path)
+
         acoustic_features = analyze_audio(normalized_path)
         speech_analysis = analyze_speech(normalized_path)
+
         duration = speech_analysis.get("duration_seconds") or 0.0
         if duration > MAX_RECORDING_SECONDS + 0.25:
             raise HTTPException(
@@ -230,11 +227,12 @@ async def generate_voice_art(
         resolved_theme = visual_parameters["theme"]
 
         logger.info(
-            "Created artwork id=%s source=%s theme=%s bytes=%s",
+            "Created artwork id=%s source=%s theme=%s bytes=%s original_filename=%r",
             artwork_id,
             validated_source,
             resolved_theme,
             byte_count,
+            audio.filename,
         )
 
         return JSONResponse(
@@ -268,8 +266,7 @@ async def generate_voice_art(
         ) from exc
     finally:
         cleanup_temp_file(temp_path)
-        if normalized_path:
-            cleanup_temp_file(normalized_path)
+        cleanup_temp_file(normalized_path)
 
 
 @app.post("/gallery/save")
@@ -285,6 +282,7 @@ async def save_gallery_artwork(
         dna = json.loads(voice_dna)
         if not isinstance(dna, dict):
             raise ValueError("Invalid Voice DNA.")
+
         item = await save_artwork(
             get_gallery_id(request),
             artwork_id,
@@ -304,7 +302,10 @@ async def save_gallery_artwork(
 
 
 @app.post("/gallery/delete/{artwork_id}")
-async def remove_gallery_artwork(request: Request, artwork_id: str) -> JSONResponse:
+async def remove_gallery_artwork(
+    request: Request,
+    artwork_id: str,
+) -> JSONResponse:
     """Delete artwork from the current browser gallery."""
     try:
         deleted = await delete_artwork(get_gallery_id(request), artwork_id)
@@ -330,10 +331,16 @@ async def explicit_not_found_page(request: Request) -> HTMLResponse:
 
 
 @app.exception_handler(StarletteHTTPException)
-async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> Response:
-    """Render browser-facing errors as HTML, except /generate and action routes."""
+async def http_exception_handler(
+    request: Request,
+    exc: StarletteHTTPException,
+) -> Response:
+    """Render browser-facing errors as HTML except action routes."""
     if request.url.path.startswith("/generate") or request.url.path.startswith("/gallery/"):
-        return JSONResponse(status_code=exc.status_code, content={"detail": str(exc.detail)})
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": str(exc.detail)},
+        )
 
     if exc.status_code == 404:
         return templates.TemplateResponse(
@@ -356,12 +363,22 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException) 
 
 
 @app.exception_handler(Exception)
-async def unhandled_exception_handler(request: Request, exc: Exception) -> HTMLResponse:
-    logger.exception("Unhandled application error at %s", request.url.path, exc_info=exc)
+async def unhandled_exception_handler(
+    request: Request,
+    exc: Exception,
+) -> HTMLResponse:
+    logger.exception(
+        "Unhandled application error at %s",
+        request.url.path,
+        exc_info=exc,
+    )
     return templates.TemplateResponse(
         request=request,
         name="500.html",
-        context={"title": "Something went wrong", "requested_path": request.url.path},
+        context={
+            "title": "Something went wrong",
+            "requested_path": request.url.path,
+        },
         status_code=500,
     )
 
