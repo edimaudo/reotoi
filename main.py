@@ -1,8 +1,10 @@
 """reotoi · voice art — FastAPI web application.
 
 This is a server-rendered web app, not an API-first application. The browser
-records audio or accepts a fallback audio file and submits it to the /generate
-form action. Application logic is kept in function-based service modules.
+records microphone audio or accepts a user-selected media file. Browser-side
+media decoding converts supported inputs to a small, mono 16 kHz PCM WAV before
+submission to /generate, so the server does not require FFmpeg or another
+external codec runtime.
 """
 
 from __future__ import annotations
@@ -15,7 +17,7 @@ import uuid
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, status
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -38,13 +40,15 @@ logger = logging.getLogger("reotoi")
 app = FastAPI(
     title="reotoi · voice art",
     description="Turn characteristics of a voice into unique visual artwork.",
-    version="1.0.0",
+    version="1.1.0",
 )
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 MAX_RECORDING_SECONDS = 30
+# The browser converts microphone/file input to mono 16 kHz PCM WAV before
+# posting it. Thirty seconds of this format is only about 1 MB.
 MAX_AUDIO_BYTES = 4 * 1024 * 1024
 MIN_AUDIO_BYTES = 512
 ALLOWED_INPUT_SOURCES = {"microphone", "upload"}
@@ -57,17 +61,6 @@ ALLOWED_THEMES = {
     "geometric",
     "surprise",
 }
-WAV_MIME_TYPES = {
-    "audio/wav",
-    "audio/wave",
-    "audio/x-wav",
-    "application/wav",
-    "application/x-wav",
-    "application/octet-stream",
-    "",
-}
-
-SUPPORTED_WAV_SUFFIXES = {".wav"}
 
 
 def validate_theme(theme: str) -> str:
@@ -86,33 +79,33 @@ def validate_input_source(input_source: str) -> str:
     return normalized
 
 
-def normalized_content_type(audio: UploadFile) -> str:
-    """Return the MIME type without optional parameters such as codecs."""
-    return (audio.content_type or "").lower().split(";", 1)[0].strip()
-
-
-def validate_audio_metadata(audio: UploadFile) -> None:
-    """Require the browser-normalized WAV processing format."""
-    content_type = normalized_content_type(audio)
+def validate_processing_audio(audio: UploadFile) -> None:
+    """Validate the browser-normalized WAV sent to the server."""
+    content_type = (audio.content_type or "").lower().split(";", 1)[0].strip()
     suffix = Path(audio.filename or "").suffix.lower()
 
-    if suffix not in SUPPORTED_WAV_SUFFIXES or content_type not in WAV_MIME_TYPES:
+    allowed_content_types = {
+        "audio/wav",
+        "audio/wave",
+        "audio/x-wav",
+        "application/wav",
+        "application/x-wav",
+        "application/octet-stream",
+        "",
+    }
+
+    if suffix != ".wav" or content_type not in allowed_content_types:
         raise HTTPException(
             status_code=415,
-            detail="reotoi could not read this recording. The recording must be submitted as WAV.",
+            detail="reotoi could not process the normalized audio. Please try the recording or file again.",
         )
-
-
-def audio_suffix(_: UploadFile) -> str:
-    """All browser-submitted audio is expected to be WAV."""
-    return ".wav"
 
 
 async def save_audio_temporarily(audio: UploadFile) -> tuple[str, int]:
     """Stream the browser-normalized WAV to a temporary file."""
-    validate_audio_metadata(audio)
+    validate_processing_audio(audio)
     total = 0
-    handle = tempfile.NamedTemporaryFile(delete=False, suffix=audio_suffix(audio))
+    handle = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
     temp_path = handle.name
 
     try:
@@ -122,7 +115,7 @@ async def save_audio_temporarily(audio: UploadFile) -> tuple[str, int]:
                 if total > MAX_AUDIO_BYTES:
                     raise HTTPException(
                         status_code=413,
-                        detail="Audio must be 4 MB or smaller for this web deployment.",
+                        detail="Audio could not be processed because the normalized file is too large.",
                     )
                 handle.write(chunk)
 
@@ -151,7 +144,11 @@ def get_gallery_id(request: Request) -> str:
     return request.cookies.get("reotoi_gallery") or uuid.uuid4().hex
 
 
-def attach_gallery_cookie(request: Request, response: Response, gallery_id: str | None = None) -> Response:
+def attach_gallery_cookie(
+    request: Request,
+    response: Response,
+    gallery_id: str | None = None,
+) -> Response:
     """Ensure the anonymous gallery identifier survives browser navigation."""
     if request.cookies.get("reotoi_gallery"):
         return response
@@ -208,7 +205,7 @@ async def generate_voice_art(
     input_source: Annotated[str, Form(...)],
     theme: Annotated[str, Form()] = "surprise",
 ) -> JSONResponse:
-    """Process submitted voice audio and return the generated artwork."""
+    """Process normalized voice audio and return the generated artwork."""
     validated_theme = validate_theme(theme)
     validated_source = validate_input_source(input_source)
     temp_path, byte_count = await save_audio_temporarily(audio)
@@ -220,7 +217,10 @@ async def generate_voice_art(
         speech_analysis = analyze_speech(normalized_path)
         duration = speech_analysis.get("duration_seconds") or 0.0
         if duration > MAX_RECORDING_SECONDS + 0.25:
-            raise HTTPException(status_code=422, detail=f"Audio must be {MAX_RECORDING_SECONDS} seconds or less.")
+            raise HTTPException(
+                status_code=422,
+                detail=f"Audio must be {MAX_RECORDING_SECONDS} seconds or less.",
+            )
 
         artwork_id, artwork_url, visual_parameters = render_svg(
             acoustic_features,
@@ -256,10 +256,16 @@ async def generate_voice_art(
         raise
     except RuntimeError as exc:
         logger.exception("Service failure while generating artwork")
-        raise HTTPException(status_code=503, detail="Voice analysis service is unavailable right now. Please try again later.") from exc
+        raise HTTPException(
+            status_code=503,
+            detail="Voice analysis service is unavailable right now. Please try again later.",
+        ) from exc
     except Exception as exc:
         logger.exception("Unexpected generation failure")
-        raise HTTPException(status_code=500, detail="reotoi could not create the artwork. Please try again later.") from exc
+        raise HTTPException(
+            status_code=500,
+            detail="reotoi could not create the artwork. Please try again later.",
+        ) from exc
     finally:
         cleanup_temp_file(temp_path)
         if normalized_path:
@@ -291,7 +297,10 @@ async def save_gallery_artwork(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Gallery save failed")
-        raise HTTPException(status_code=503, detail="Gallery storage is unavailable right now. Please try again later.") from exc
+        raise HTTPException(
+            status_code=503,
+            detail="Gallery storage is unavailable right now. Please try again later.",
+        ) from exc
 
 
 @app.post("/gallery/delete/{artwork_id}")
@@ -304,7 +313,10 @@ async def remove_gallery_artwork(request: Request, artwork_id: str) -> JSONRespo
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Gallery delete failed")
-        raise HTTPException(status_code=503, detail="Gallery storage is unavailable right now. Please try again later.") from exc
+        raise HTTPException(
+            status_code=503,
+            detail="Gallery storage is unavailable right now. Please try again later.",
+        ) from exc
 
 
 @app.get("/404", response_class=HTMLResponse, include_in_schema=False)
