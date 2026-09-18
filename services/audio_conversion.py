@@ -1,12 +1,20 @@
 """Audio decoding and normalization for reotoi.
 
-User uploads may be WAV, MP3, OGG, FLAC and other formats supported by the installed libsndfile build. Formats such as
-MP4/M4A/WebM/AAC that are not handled by libsndfile are normalized in the
-browser before reaching this service.
+The web app accepts microphone audio and user-supplied audio/media files. The
+server decodes formats supported by the installed libsndfile build, including
+WAV, MP3, OGG and FLAC. Browser-normalized WAV is also accepted for containers
+or codecs that libsndfile cannot decode, such as supported MP4/M4A/WebM input.
+
+Format detection is based on the actual uploaded bytes, not the filename or
+MIME type. This prevents valid MP3/OGG/etc. files from being rejected because a
+browser supplied an unexpected filename or content type.
+
+No external codec runtime is used.
 """
 
 from __future__ import annotations
 
+from io import BytesIO
 import tempfile
 from pathlib import Path
 
@@ -15,21 +23,6 @@ import numpy as np
 import soundfile as sf
 
 TARGET_SAMPLE_RATE = 16_000
-
-# Formats expected to arrive directly from the browser and be decoded by
-# libsndfile. MP3 support requires libsndfile >= 1.1.0.
-DIRECT_INPUT_SUFFIXES = {
-    ".wav",
-    ".wave",
-    ".flac",
-    ".mp3",
-    ".ogg",
-    ".oga",
-    ".aif",
-    ".aiff",
-    ".au",
-    ".snd",
-}
 
 
 def _temporary_wav_path() -> str:
@@ -43,29 +36,40 @@ def _temporary_wav_path() -> str:
     return handle.name
 
 
-def _read_audio(source: Path) -> tuple[np.ndarray, int]:
-    """Decode an input audio file through libsndfile."""
-    suffix = source.suffix.lower()
+def _read_audio(source: Path) -> tuple[np.ndarray, int, str]:
+    """Decode supported audio from the actual file bytes.
 
-    if suffix not in DIRECT_INPUT_SUFFIXES:
+    Using BytesIO prevents libsndfile from relying on the temporary filename
+    extension when identifying formats. A file named .bin can therefore still
+    be decoded correctly when its contents are a valid MP3, OGG, FLAC or WAV.
+    """
+    try:
+        raw = source.read_bytes()
+    except OSError as exc:
         raise ValueError(
-            "This audio format requires browser-side audio conversion before analysis. "
-            "Use MP3, OGG, FLAC or WAV, or choose a browser-supported MP4/M4A/WebM file."
-        )
+            "reotoi could not read this audio file. Please try another supported file."
+        ) from exc
+
+    if not raw:
+        raise ValueError("The audio recording is empty.")
+
+    buffer = BytesIO(raw)
 
     try:
-        info = sf.info(str(source))
+        info = sf.info(buffer)
     except (RuntimeError, OSError) as exc:
         raise ValueError(
-            "reotoi could not read this audio file. Please try another MP3, OGG, FLAC or WAV file."
+            "reotoi could not decode this audio file. Use MP3, OGG, FLAC or WAV, "
+            "or provide a browser-supported MP4, M4A or WebM file."
         ) from exc
 
     if info.frames <= 0 or info.samplerate <= 0:
         raise ValueError("The audio recording is empty or has an invalid sample rate.")
 
     try:
+        buffer.seek(0)
         audio, sample_rate = sf.read(
-            str(source),
+            buffer,
             always_2d=False,
             dtype="float32",
         )
@@ -79,7 +83,8 @@ def _read_audio(source: Path) -> tuple[np.ndarray, int]:
     if audio.size == 0:
         raise ValueError("The audio recording is empty.")
 
-    return audio, int(sample_rate)
+    detected_format = (info.format or "audio").upper()
+    return audio, int(sample_rate), detected_format
 
 
 def _write_normalized_wav(
@@ -113,7 +118,12 @@ def _write_normalized_wav(
         raise ValueError("The audio recording is empty after normalization.")
 
     # Prevent NaN/Inf values from reaching feature extraction.
-    audio = np.nan_to_num(audio, nan=0.0, posinf=0.0, neginf=0.0)
+    audio = np.nan_to_num(
+        audio,
+        nan=0.0,
+        posinf=0.0,
+        neginf=0.0,
+    )
 
     sf.write(
         str(output_path),
@@ -129,18 +139,19 @@ def normalize_audio(
     output_path: str | Path | None = None,
     max_duration_seconds: float | None = None,
 ) -> str:
-    """Decode supported input audio and produce normalized mono 16 kHz WAV.
+    """Decode audio and produce normalized mono 16 kHz PCM WAV.
 
-    The input may be a supported source format such as MP3, OGG, FLAC or WAV.
-    MP4/M4A/WebM/AAC are expected to have been converted to WAV by the browser
-    before this function is called.
+    Supported source formats depend on the installed libsndfile build. The
+    format is detected from the file contents rather than its suffix, so
+    correct MP3/OGG/FLAC/WAV bytes remain decodable even if upload metadata is
+    missing or incorrect.
     """
     source = Path(input_path).expanduser().resolve()
 
     if not source.is_file():
         raise ValueError("The submitted audio file could not be found.")
 
-    audio, sample_rate = _read_audio(source)
+    audio, sample_rate, _detected_format = _read_audio(source)
 
     if max_duration_seconds is not None:
         duration = audio.shape[0] / sample_rate
@@ -165,8 +176,23 @@ def normalize_audio(
         )
 
         if not destination.is_file() or destination.stat().st_size <= 44:
+            raise ValueError("The audio could not be normalized for analysis.")
+
+        # Validate the generated WAV independently of the source format.
+        try:
+            normalized_info = sf.info(str(destination))
+        except (RuntimeError, OSError) as exc:
             raise ValueError(
-                "The audio could not be normalized for analysis."
+                "The normalized audio could not be read for analysis."
+            ) from exc
+
+        if (
+            normalized_info.frames <= 0
+            or normalized_info.samplerate != TARGET_SAMPLE_RATE
+            or normalized_info.channels != 1
+        ):
+            raise ValueError(
+                "The normalized audio did not produce the expected mono 16 kHz format."
             )
 
         return str(destination)
