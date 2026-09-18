@@ -1,4 +1,9 @@
-"""Validate and normalize browser-prepared PCM WAV audio for reotoi."""
+"""Audio decoding and normalization for reotoi.
+
+User uploads may be WAV, MP3, OGG, FLAC and other formats supported by the installed libsndfile build. Formats such as
+MP4/M4A/WebM/AAC that are not handled by libsndfile are normalized in the
+browser before reaching this service.
+"""
 
 from __future__ import annotations
 
@@ -10,6 +15,21 @@ import numpy as np
 import soundfile as sf
 
 TARGET_SAMPLE_RATE = 16_000
+
+# Formats expected to arrive directly from the browser and be decoded by
+# libsndfile. MP3 support requires libsndfile >= 1.1.0.
+DIRECT_INPUT_SUFFIXES = {
+    ".wav",
+    ".wave",
+    ".flac",
+    ".mp3",
+    ".ogg",
+    ".oga",
+    ".aif",
+    ".aiff",
+    ".au",
+    ".snd",
+}
 
 
 def _temporary_wav_path() -> str:
@@ -23,19 +43,43 @@ def _temporary_wav_path() -> str:
     return handle.name
 
 
-def _is_wav(path: Path) -> bool:
-    """Check the RIFF/WAVE file signature."""
-    try:
-        with path.open("rb") as handle:
-            header = handle.read(12)
-    except OSError:
-        return False
+def _read_audio(source: Path) -> tuple[np.ndarray, int]:
+    """Decode an input audio file through libsndfile."""
+    suffix = source.suffix.lower()
 
-    return (
-        len(header) >= 12
-        and header[:4] == b"RIFF"
-        and header[8:12] == b"WAVE"
-    )
+    if suffix not in DIRECT_INPUT_SUFFIXES:
+        raise ValueError(
+            "This audio format requires browser-side audio conversion before analysis. "
+            "Use MP3, OGG, FLAC or WAV, or choose a browser-supported MP4/M4A/WebM file."
+        )
+
+    try:
+        info = sf.info(str(source))
+    except (RuntimeError, OSError) as exc:
+        raise ValueError(
+            "reotoi could not read this audio file. Please try another MP3, OGG, FLAC or WAV file."
+        ) from exc
+
+    if info.frames <= 0 or info.samplerate <= 0:
+        raise ValueError("The audio recording is empty or has an invalid sample rate.")
+
+    try:
+        audio, sample_rate = sf.read(
+            str(source),
+            always_2d=False,
+            dtype="float32",
+        )
+    except (RuntimeError, OSError) as exc:
+        raise ValueError(
+            "reotoi could not decode this audio file. Please try another supported file."
+        ) from exc
+
+    audio = np.asarray(audio, dtype=np.float32)
+
+    if audio.size == 0:
+        raise ValueError("The audio recording is empty.")
+
+    return audio, int(sample_rate)
 
 
 def _write_normalized_wav(
@@ -50,6 +94,7 @@ def _write_normalized_wav(
         raise ValueError("The audio recording has an unsupported channel layout.")
 
     audio = np.asarray(audio, dtype=np.float32)
+
     if audio.size == 0:
         raise ValueError("The audio recording is empty.")
 
@@ -67,6 +112,9 @@ def _write_normalized_wav(
     if audio.size == 0:
         raise ValueError("The audio recording is empty after normalization.")
 
+    # Prevent NaN/Inf values from reaching feature extraction.
+    audio = np.nan_to_num(audio, nan=0.0, posinf=0.0, neginf=0.0)
+
     sf.write(
         str(output_path),
         audio,
@@ -79,39 +127,27 @@ def _write_normalized_wav(
 def normalize_audio(
     input_path: str | Path,
     output_path: str | Path | None = None,
+    max_duration_seconds: float | None = None,
 ) -> str:
-    """Validate and standardize the browser-prepared WAV for analysis.
+    """Decode supported input audio and produce normalized mono 16 kHz WAV.
 
-    User-facing input formats are handled before this function is called.
-    This function intentionally validates the actual file bytes rather than
-    relying on a browser MIME type.
+    The input may be a supported source format such as MP3, OGG, FLAC or WAV.
+    MP4/M4A/WebM/AAC are expected to have been converted to WAV by the browser
+    before this function is called.
     """
     source = Path(input_path).expanduser().resolve()
 
     if not source.is_file():
         raise ValueError("The submitted audio file could not be found.")
 
-    if not _is_wav(source):
-        raise ValueError(
-            "reotoi could not process the normalized audio. Please try the recording or file again."
-        )
+    audio, sample_rate = _read_audio(source)
 
-    try:
-        info = sf.info(str(source))
-        if info.frames <= 0:
-            raise ValueError("The audio recording is empty.")
-
-        audio, sample_rate = sf.read(
-            str(source),
-            always_2d=False,
-            dtype="float32",
-        )
-    except ValueError:
-        raise
-    except (RuntimeError, OSError) as exc:
-        raise ValueError(
-            "reotoi could not decode the normalized audio. Please try the recording or file again."
-        ) from exc
+    if max_duration_seconds is not None:
+        duration = audio.shape[0] / sample_rate
+        if duration > max_duration_seconds + 0.25:
+            raise ValueError(
+                f"Audio must be {max_duration_seconds:g} seconds or less."
+            )
 
     destination_was_provided = output_path is not None
     destination = (
@@ -124,13 +160,13 @@ def normalize_audio(
     try:
         _write_normalized_wav(
             audio,
-            int(sample_rate),
+            sample_rate,
             destination,
         )
 
         if not destination.is_file() or destination.stat().st_size <= 44:
             raise ValueError(
-                "The normalized audio could not be prepared for analysis."
+                "The audio could not be normalized for analysis."
             )
 
         return str(destination)
