@@ -1,3 +1,10 @@
+"""reotoi · voice art — FastAPI web application.
+
+This is a server-rendered web app, not an API-first application. The browser
+records audio or accepts a fallback audio file and submits it to the /generate
+form action. Application logic is kept in function-based service modules.
+"""
+
 from __future__ import annotations
 
 import json
@@ -50,20 +57,17 @@ ALLOWED_THEMES = {
     "geometric",
     "surprise",
 }
-ALLOWED_AUDIO_TYPES = {
-    "audio/webm",
+WAV_MIME_TYPES = {
     "audio/wav",
     "audio/wave",
     "audio/x-wav",
-    "audio/mpeg",
-    "audio/mp3",
-    "audio/mp4",
-    "audio/m4a",
-    "audio/x-m4a",
-    "audio/ogg",
-    "audio/opus",
-    "audio/aac",
+    "application/wav",
+    "application/x-wav",
+    "application/octet-stream",
+    "",
 }
+
+SUPPORTED_WAV_SUFFIXES = {".wav"}
 
 
 def validate_theme(theme: str) -> str:
@@ -88,51 +92,27 @@ def normalized_content_type(audio: UploadFile) -> str:
 
 
 def validate_audio_metadata(audio: UploadFile) -> None:
-    """Accept common audio MIME types, falling back to the uploaded filename."""
+    """Require the browser-normalized WAV processing format."""
     content_type = normalized_content_type(audio)
     suffix = Path(audio.filename or "").suffix.lower()
 
-    if content_type not in ALLOWED_AUDIO_TYPES and suffix not in {
-        ".wav", ".mp3", ".m4a", ".mp4", ".aac", ".ogg", ".opus", ".webm"
-    }:
+    if suffix not in SUPPORTED_WAV_SUFFIXES or content_type not in WAV_MIME_TYPES:
         raise HTTPException(
             status_code=415,
-            detail=(
-                "Unsupported audio format. Please use WAV, MP3, M4A, OGG, "
-                "AAC, MP4, or WebM audio."
-            ),
+            detail="reotoi could not read this recording. The recording must be submitted as WAV.",
         )
 
 
-def audio_suffix(audio: UploadFile) -> str:
-    """Return an extension that matches the normalized content type."""
-    by_type = {
-        "audio/webm": ".webm",
-        "audio/wav": ".wav",
-        "audio/wave": ".wav",
-        "audio/x-wav": ".wav",
-        "audio/mpeg": ".mp3",
-        "audio/mp3": ".mp3",
-        "audio/mp4": ".m4a",
-        "audio/m4a": ".m4a",
-        "audio/x-m4a": ".m4a",
-        "audio/ogg": ".ogg",
-        "audio/opus": ".opus",
-        "audio/aac": ".aac",
-    }
-    content_type = normalized_content_type(audio)
-    if content_type in by_type:
-        return by_type[content_type]
-    return Path(audio.filename or "audio").suffix.lower() or ".audio"
+def audio_suffix(_: UploadFile) -> str:
+    """All browser-submitted audio is expected to be WAV."""
+    return ".wav"
 
 
 async def save_audio_temporarily(audio: UploadFile) -> tuple[str, int]:
-    """Stream the original audio file to a temporary path with size protection."""
+    """Stream the browser-normalized WAV to a temporary file."""
     validate_audio_metadata(audio)
-    content_type = normalized_content_type(audio)
-    suffix = audio_suffix(audio)
     total = 0
-    handle = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    handle = tempfile.NamedTemporaryFile(delete=False, suffix=audio_suffix(audio))
     temp_path = handle.name
 
     try:
@@ -147,15 +127,11 @@ async def save_audio_temporarily(audio: UploadFile) -> tuple[str, int]:
                 handle.write(chunk)
 
         if total < MIN_AUDIO_BYTES:
-            raise HTTPException(status_code=400, detail="The audio recording is empty or too short.")
+            raise HTTPException(
+                status_code=400,
+                detail="The audio recording is empty or too short.",
+            )
 
-        logger.info(
-            "Received audio source=%s content_type=%s filename=%s bytes=%s",
-            "unknown",
-            content_type or "<missing>",
-            audio.filename or "<unnamed>",
-            total,
-        )
         return temp_path, total
     except Exception:
         cleanup_temp_file(temp_path)
