@@ -69,6 +69,7 @@
   const formError = document.getElementById("form-error");
 
   const resultSection = document.getElementById("result-section");
+  // Optional: older templates may omit this message element.
   const resultMessage = document.getElementById("result-message");
   const resultTheme = document.getElementById("result-theme");
   const resultInput = document.getElementById("result-input");
@@ -95,7 +96,6 @@
     fileName,
     formError,
     resultSection,
-    resultMessage,
     resultTheme,
     resultInput,
     voiceDnaBars,
