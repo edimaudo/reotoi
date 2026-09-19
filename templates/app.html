@@ -110,7 +110,7 @@
 
 {% block scripts %}
 <script src="{{ url_for('static', path='js/app.js') }}" defer></script>
-<script>
+<!-- <script>
 (function () {
     const maxSeconds = {{ max_recording_seconds|tojson }};
     const recordButton = document.getElementById('record-button');
@@ -363,5 +363,5 @@
         saveStatus.textContent = 'Gallery persistence will be connected to the gallery service.';
     });
 })();
-</script>
+</script> -->
 {% endblock %}
