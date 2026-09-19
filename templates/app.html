@@ -109,7 +109,8 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', path='js/app.js') }}" defer></script>
+<script src="{{ url_for('static', path='js/app.js') }}"></script>
+
 <!-- <script>
 (function () {
     const maxSeconds = {{ max_recording_seconds|tojson }};
