@@ -1,4 +1,4 @@
-# reotoi
+# reotoi | Voice Art
 
 ## Overview
 It is a web application that turns your voice into visual art.
@@ -22,10 +22,9 @@ reotoi/
 │   ├── css/
 │   │   └── styles.css
 │   ├── js/
-│   │   ├── app.js
-│   │   ├── theme.js
-│   │   └── gallery.js
-│   └── assets/
+│       ├── app.js
+│       ├── theme.js
+│       └── gallery.js
 │
 ├── services/
 │   ├── __init__.py
