@@ -1,18 +1,15 @@
 from __future__ import annotations
-
 import logging
 import os
 import tempfile
 from pathlib import Path
 from typing import Annotated
-
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
-
 from services.art_generator import render_svg
 from services.audio_conversion import normalize_audio
 from services.assemblyai_service import analyze_speech
@@ -25,9 +22,7 @@ STATIC_DIR = BASE_DIR / "static"
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("reotoi")
 
-app = FastAPI(
-    title="reotoi"
-)
+app = FastAPI(title="reotoi")
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
@@ -147,7 +142,7 @@ async def landing_page(request: Request) -> HTMLResponse:
         context={"title": "reotoi · voice art"},
     )
 
-
+#### Routes ####
 @app.get("/create", response_class=HTMLResponse)
 async def app_page(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
@@ -192,8 +187,6 @@ async def generate_voice_art(
     normalized_path = None
 
     try:
-        # audio_conversion.py detects supported formats from the actual uploaded
-        # bytes. Browser-normalized WAV is also accepted through the same path.
         normalized_path = normalize_audio(
             temp_path,
             max_duration_seconds=MAX_RECORDING_SECONDS,
