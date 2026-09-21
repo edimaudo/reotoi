@@ -141,6 +141,7 @@
   let source = null;
   let latestResult = null;
   let preparationToken = 0;
+  let saveStatusTimer = null;
 
   if (audioFileInput) {
     audioFileInput.setAttribute(
@@ -1057,18 +1058,17 @@
 
       track.className =
         "dna-row__track";
-
-      track.setAttribute(
-        "aria-hidden",
-        "true"
-      );
+      track.setAttribute("role", "progressbar");
+      track.setAttribute("aria-valuemin", "0");
+      track.setAttribute("aria-valuemax", "10");
+      track.setAttribute("aria-valuenow", String(clamped));
+      track.setAttribute("aria-label", `${key} score`);
 
       const fill =
         document.createElement("span");
 
       fill.className =
         "dna-row__fill";
-
       fill.style.width =
         `${clamped * 10}%`;
 
@@ -1239,12 +1239,7 @@
   async function generate() {
     setError("");
 
-    if (saveStatus) {
-      setElementText(
-        saveStatus,
-        ""
-      );
-    }
+    showSaveStatus("");
 
     if (!source?.blob) {
       setError(
@@ -1385,6 +1380,27 @@
     );
   }
 
+  function clearSaveStatusTimer() {
+    if (saveStatusTimer !== null) {
+      window.clearTimeout(saveStatusTimer);
+      saveStatusTimer = null;
+    }
+  }
+
+  function showSaveStatus(message, duration = 2500) {
+    if (!saveStatus) return;
+
+    clearSaveStatusTimer();
+    setElementText(saveStatus, message);
+
+    if (message && duration > 0) {
+      saveStatusTimer = window.setTimeout(() => {
+        setElementText(saveStatus, "");
+        saveStatusTimer = null;
+      }, duration);
+    }
+  }
+
   if (saveButton) {
     saveButton.addEventListener(
       "click",
@@ -1445,30 +1461,20 @@
             ])
           );
 
-          if (saveStatus) {
-            setElementText(
-              saveStatus,
-              "Saved to your gallery."
-            );
-          }
+          showSaveStatus("Saved to your gallery.", 2200);
         } catch (error) {
           console.error(
             "Gallery save failed:",
             error
           );
 
-          if (saveStatus) {
-            const message =
-              error?.name ===
-              "QuotaExceededError"
-                ? "Your browser gallery is full. Remove saved artwork before adding another piece."
-                : "The artwork could not be saved to your gallery.";
+          const message =
+            error?.name ===
+            "QuotaExceededError"
+              ? "Your browser gallery is full. Remove saved artwork before adding another piece."
+              : "The artwork could not be saved to your gallery.";
 
-            setElementText(
-              saveStatus,
-              message
-            );
-          }
+          showSaveStatus(message, 4500);
         } finally {
           saveButton.disabled = false;
         }
