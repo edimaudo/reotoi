@@ -34,7 +34,7 @@
                 <div class="record-visual" aria-hidden="true">
                     <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
                 </div>
-                <p class="recorder-status" id="recorder-status">Ready to record (max. 30 seconds)</p>
+                <p class="recorder-status" id="recorder-status">Ready to record (max. {{ max_recording_seconds }} seconds)</p>
                 <p class="recorder-timer" id="recorder-timer">00:00</p>
                 <p class="recorder-help" id="recorder-help">Your browser will ask for microphone permission.</p>
 
@@ -46,7 +46,7 @@
 
             <div class="upload-fallback">
                 <div class="divider"><span>or</span></div>
-                <p><strong>Microphone not working?</strong> Use an audio file instead.</p>
+                <p><strong>Prefer a recording?</strong> Use an audio file instead.</p>
                 <label class="file-button button button--secondary" for="audio-file">Choose audio file</label>
                 <input id="audio-file" type="file" accept="audio/*" hidden>
                 <p class="file-name" id="file-name" aria-live="polite"></p>
