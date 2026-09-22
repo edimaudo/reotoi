@@ -240,7 +240,7 @@ main {
 .eyebrow {
   margin: 0 0 .8rem;
   color: var(--muted);
-  font-size: .74rem;
+  font-size: .9rem;
   font-weight: 700;
   letter-spacing: .12em;
   text-transform: uppercase;
@@ -803,6 +803,23 @@ p {
   margin-top: 4rem;
   padding: 4rem 2rem;
   text-align: center;
+}
+
+.gallery-card {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.gallery-card__details {
+  padding: 0 .25rem .25rem;
+}
+
+.gallery-card__actions {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  flex-wrap: wrap;
 }
 
 .gallery-empty__mark {
