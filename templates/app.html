@@ -11,7 +11,6 @@
                 <div>
                     <h2 id="input-title">Select a theme & Speak</h2>
                 </div>
-                
             </div>
 
             <fieldset class="theme-fieldset">
@@ -60,18 +59,12 @@
 
             <p class="form-error" id="form-error" role="alert" hidden></p>
         </section>
-
-
     </div>
-
-
 </section>
 
 <section class="result-section" id="result-section" aria-labelledby="result-title" hidden>
     <div class="section-heading section-heading--wide">
-        
         <h2 id="result-title">Your Artwork</h2>
-        
     </div>
 
     <div class="result-grid">
@@ -101,14 +94,39 @@
             <div class="result-actions">
                 <button type="button" class="button button--primary" id="save-button">Save to gallery</button>
                 <a class="button button--secondary is-disabled" id="download-button" aria-disabled="true">Download</a>
+                <button type="button" class="button button--secondary" id="clear-button">Clear artwork</button>
             </div>
             <p class="fine-print" id="save-status" aria-live="polite"></p>
         </div>
     </div>
 </section>
+
+<dialog
+    id="clear-artwork-modal"
+    class="confirm-modal"
+    aria-labelledby="clear-artwork-title"
+    aria-describedby="clear-artwork-description"
+>
+    <div class="confirm-modal__content">
+        <p class="eyebrow">CLEAR ARTWORK</p>
+        <h3 id="clear-artwork-title">Would you like to clear the artwork?</h3>
+        <p id="clear-artwork-description">
+            This will remove the current artwork and clear the audio used to create it from this page.
+            Artwork already saved to your gallery will not be deleted.
+        </p>
+
+        <div class="result-actions">
+            <button type="button" class="button button--primary" id="clear-artwork-confirm">
+                Clear artwork
+            </button>
+            <button type="button" class="button button--secondary" id="clear-artwork-cancel">
+                Keep artwork
+            </button>
+        </div>
+    </div>
+</dialog>
 {% endblock %}
 
 {% block scripts %}
 <script src="{{ url_for('static', path='js/app.js') }}"></script>
-
 {% endblock %}
