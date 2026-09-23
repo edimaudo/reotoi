@@ -1590,34 +1590,25 @@
     });
   }
 
-  // if (clearArtworkConfirm) {
-  //   clearArtworkConfirm.addEventListener("click", () => {
-  //     closeClearArtworkModal();
-  //     resetCreation();
-  //   });
-  // }
+
   if (clearArtworkConfirm) {
   clearArtworkConfirm.addEventListener("click", () => {
     closeClearArtworkModal();
     resetCreation();
 
     window.setTimeout(() => {
-      recordButton.focus();
+      // recordButton.focus();
     }, 0);
   });
 }
 
-  // if (clearArtworkCancel) {
-  //   clearArtworkCancel.addEventListener("click", () => {
-  //     closeClearArtworkModal();
-  //   });
-  // }
+
   if (clearArtworkCancel) {
   clearArtworkCancel.addEventListener("click", () => {
     closeClearArtworkModal();
 
     window.setTimeout(() => {
-      clearButton.focus();
+      // clearButton.focus();
     }, 0);
   });
 }
