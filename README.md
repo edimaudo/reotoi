@@ -1,7 +1,7 @@
 # reotoi | Voice Art
 
 ## Overview
-It is a web application that turns your voice into visual art.
+Turn your voice into visual art.
 The name comes from the Māori language: reo & toi which means voice art.
 
 ## Project Structure
