@@ -67,6 +67,7 @@
   const audioFileInput = document.getElementById("audio-file");
   const fileName = document.getElementById("file-name");
   const formError = document.getElementById("form-error");
+
   const resultSection = document.getElementById("result-section");
   // Optional: older templates may omit this message element.
   const resultMessage = document.getElementById("result-message");
@@ -78,39 +79,38 @@
   const artworkPlaceholder = document.getElementById("artwork-placeholder");
 
   const downloadButton = document.getElementById("download-button");
-  const saveButton = document.getElementById("save-button");
-  const saveStatus = document.getElementById("save-status");
   const clearButton = document.getElementById("clear-button");
   const saveButton = document.getElementById("save-button");
   const saveStatus = document.getElementById("save-status");
+
   const clearArtworkModal = document.getElementById("clear-artwork-modal");
   const clearArtworkConfirm = document.getElementById("clear-artwork-confirm");
   const clearArtworkCancel = document.getElementById("clear-artwork-cancel");
 
   // The creation page depends on these elements. Fail cleanly if the template
   // is out of sync instead of throwing "Cannot set properties of null" later.
-const requiredElements = {
-  recorder,
-  recordButton,
-  recordLabel,
-  recorderStatus,
-  recorderTimer,
-  recorderHelp,
-  generateButton,
-  audioFileInput,
-  fileName,
-  formError,
-  resultSection,
-  resultTheme,
-  resultInput,
-  voiceDnaBars,
-  artworkImage,
-  artworkPlaceholder,
-  downloadButton,
-  clearButton,
-  saveButton,
-  saveStatus,
-};
+  const requiredElements = {
+    recorder,
+    recordButton,
+    recordLabel,
+    recorderStatus,
+    recorderTimer,
+    recorderHelp,
+    generateButton,
+    audioFileInput,
+    fileName,
+    formError,
+    resultSection,
+    resultTheme,
+    resultInput,
+    voiceDnaBars,
+    artworkImage,
+    artworkPlaceholder,
+    downloadButton,
+    clearButton,
+    saveButton,
+    saveStatus,
+  };
 
   const missingElements = Object.entries(requiredElements)
     .filter(([, element]) => !element)
@@ -1152,41 +1152,6 @@ const requiredElements = {
       artworkImage.hidden = false;
       artworkPlaceholder.hidden = true;
 
-      if (clearButton) {
-  clearButton.addEventListener("click", () => {
-    openClearArtworkModal();
-  });
-}
-
-if (clearArtworkConfirm) {
-  clearArtworkConfirm.addEventListener(
-    "click",
-    () => {
-      closeClearArtworkModal();
-      resetCreation();
-    }
-  );
-}
-
-if (clearArtworkCancel) {
-  clearArtworkCancel.addEventListener(
-    "click",
-    () => {
-      closeClearArtworkModal();
-    }
-  );
-}
-
-if (clearArtworkModal) {
-  clearArtworkModal.addEventListener(
-    "click",
-    (event) => {
-      if (event.target === clearArtworkModal) {
-        closeClearArtworkModal();
-      }
-    }
-  );
-}
       if (downloadButton) {
         downloadButton.href =
           data.artwork_url;
@@ -1253,125 +1218,101 @@ if (clearArtworkModal) {
   }
 
   function resetCreation() {
-  // Invalidate any audio preparation currently in progress so an
-  // older async operation cannot put cleared audio back into state.
-  preparationToken += 1;
+    // Invalidate any audio preparation currently in progress so an older
+    // promise cannot put the cleared audio back into state.
+    preparationToken += 1;
 
-  recording = false;
-  preparingAudio = false;
+    recording = false;
+    preparingAudio = false;
 
-  stopTimer();
-  cleanupAudioGraph();
-  resetRecordingVisuals();
+    stopTimer();
+    cleanupAudioGraph();
+    resetRecordingVisuals();
 
-  recordedSamples = [];
-  recordedSampleCount = 0;
-  elapsed = 0;
+    recordedSamples = [];
+    recordedSampleCount = 0;
+    elapsed = 0;
+    source = null;
+    latestResult = null;
 
-  source = null;
-  latestResult = null;
+    if (audioFileInput) {
+      audioFileInput.value = "";
+    }
 
-  // Clear uploaded audio from the current page state.
-  if (audioFileInput) {
-    audioFileInput.value = "";
-  }
-
-  setElementText(fileName, "");
-
-  // Reset recorder UI.
-  setElementText(
-    recorderStatus,
-    `Ready to record (max. ${maxSeconds} seconds)`
-  );
-
-  setElementText(
-    recorderTimer,
-    formatTime(0)
-  );
-
-  setElementText(
-    recorderHelp,
-    "Your browser will ask for microphone permission."
-  );
-
-  setElementText(
-    recordLabel,
-    "Start speaking"
-  );
-
-  if (recorder) {
-    recorder.classList.remove("is-recording");
-  }
-
-  setError("");
-
-  // Remove the generated result.
-  if (resultSection) {
-    resultSection.hidden = true;
-  }
-
-  if (artworkImage) {
-    artworkImage.removeAttribute("src");
-    artworkImage.alt = "Generated artwork";
-    artworkImage.hidden = true;
-  }
-
-  if (artworkPlaceholder) {
-    artworkPlaceholder.hidden = false;
-  }
-
-  // Remove Voice DNA bars.
-  if (voiceDnaBars) {
-    voiceDnaBars.replaceChildren();
-  }
-
-  // Reset result metadata.
-  setElementText(resultTheme, "—");
-  setElementText(resultInput, "—");
-
-  if (resultMessage) {
-    setElementText(resultMessage, "");
-  }
-
-  // Disable Download again.
-  if (downloadButton) {
-    downloadButton.removeAttribute("href");
-    downloadButton.removeAttribute("download");
-    downloadButton.classList.add("is-disabled");
-    downloadButton.setAttribute(
-      "aria-disabled",
-      "true"
+    setElementText(fileName, "");
+    setElementText(
+      recorderStatus,
+      `Ready to record (max. ${maxSeconds} seconds)`
     );
+    setElementText(recorderTimer, formatTime(0));
+    setElementText(
+      recorderHelp,
+      "Your browser will ask for microphone permission."
+    );
+    setElementText(recordLabel, "Start speaking");
+
+    if (recorder) {
+      recorder.classList.remove("is-recording");
+    }
+
+    setError("");
+
+    if (resultSection) {
+      resultSection.hidden = true;
+    }
+
+    if (artworkImage) {
+      artworkImage.removeAttribute("src");
+      artworkImage.alt = "Generated artwork";
+      artworkImage.hidden = true;
+    }
+
+    if (artworkPlaceholder) {
+      artworkPlaceholder.hidden = false;
+    }
+
+    if (voiceDnaBars) {
+      voiceDnaBars.replaceChildren();
+    }
+
+    setElementText(resultTheme, "—");
+    setElementText(resultInput, "—");
+
+    if (resultMessage) {
+      setElementText(resultMessage, "");
+    }
+
+    if (downloadButton) {
+      downloadButton.removeAttribute("href");
+      downloadButton.removeAttribute("download");
+      downloadButton.classList.add("is-disabled");
+      downloadButton.setAttribute("aria-disabled", "true");
+    }
+
+    if (saveButton) {
+      saveButton.disabled = true;
+    }
+
+    showSaveStatus("");
+    updateGenerateState();
   }
 
-  // Disable Save again.
-  if (saveButton) {
-    saveButton.disabled = true;
-  }
-
-  showSaveStatus("");
-  updateGenerateState();
-}
   function openClearArtworkModal() {
-  if (!clearArtworkModal) return;
+    if (!clearArtworkModal) return;
 
-  if (
-    typeof clearArtworkModal.showModal === "function"
-  ) {
-    clearArtworkModal.showModal();
+    if (typeof clearArtworkModal.showModal === "function") {
+      clearArtworkModal.showModal();
+    }
   }
-}
 
-function closeClearArtworkModal() {
-  if (!clearArtworkModal) return;
+  function closeClearArtworkModal() {
+    if (!clearArtworkModal) return;
 
-  if (
-    typeof clearArtworkModal.close === "function"
-  ) {
-    clearArtworkModal.close();
+    if (typeof clearArtworkModal.close === "function") {
+      clearArtworkModal.close();
+    }
   }
-}
-  
+
   async function parseResponse(response) {
     const contentType =
       response.headers.get(
@@ -1641,6 +1582,33 @@ function closeClearArtworkModal() {
         }
       }
     );
+  }
+
+  if (clearButton) {
+    clearButton.addEventListener("click", () => {
+      openClearArtworkModal();
+    });
+  }
+
+  if (clearArtworkConfirm) {
+    clearArtworkConfirm.addEventListener("click", () => {
+      closeClearArtworkModal();
+      resetCreation();
+    });
+  }
+
+  if (clearArtworkCancel) {
+    clearArtworkCancel.addEventListener("click", () => {
+      closeClearArtworkModal();
+    });
+  }
+
+  if (clearArtworkModal) {
+    clearArtworkModal.addEventListener("click", (event) => {
+      if (event.target === clearArtworkModal) {
+        closeClearArtworkModal();
+      }
+    });
   }
 
   if (downloadButton) {
