@@ -1597,7 +1597,8 @@
     resetCreation();
 
     window.setTimeout(() => {
-      // recordButton.focus();
+      recordButton.focus();
+      recordButton.blur();
     }, 0);
   });
 }
@@ -1608,7 +1609,8 @@
     closeClearArtworkModal();
 
     window.setTimeout(() => {
-      // clearButton.focus();
+      clearButton.focus();
+      clearButton.blur();
     }, 0);
   });
 }
