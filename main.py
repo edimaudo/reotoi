@@ -32,7 +32,7 @@ app = FastAPI(title="reotoi")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
-MAX_RECORDING_SECONDS = 30
+MAX_RECORDING_SECONDS = 300
 MAX_AUDIO_BYTES = 4 * 1024 * 1024
 MIN_AUDIO_BYTES = 512
 ALLOWED_INPUT_SOURCES = {"microphone", "upload"}
@@ -207,10 +207,10 @@ async def generate_voice_art(
         #         detail=f"Audio must be {MAX_RECORDING_SECONDS} seconds or less.",
         #     )
 
-        # artwork_id, artwork_url, visual_parameters = render_svg(
-        #     acoustic_features,
-        #     validated_theme,
-        # )
+        artwork_id, artwork_url, visual_parameters = render_svg(
+            acoustic_features,
+            validated_theme,
+        )
         voice_dna = calculate_voice_dna(acoustic_features)
         resolved_theme = visual_parameters["theme"]
 
