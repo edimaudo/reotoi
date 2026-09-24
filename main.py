@@ -211,7 +211,7 @@ async def landing_page(request: Request) -> HTMLResponse:
     return attach_gallery_cookie(request, response)
 
 
-@app.get("/app", response_class=HTMLResponse)
+@app.get("/create", response_class=HTMLResponse)
 async def app_page(request: Request) -> HTMLResponse:
     response = templates.TemplateResponse(
         request=request,
