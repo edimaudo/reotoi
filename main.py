@@ -200,12 +200,12 @@ async def generate_voice_art(
         acoustic_features = analyze_audio(normalized_path)
         #speech_analysis = analyze_speech(normalized_path)
 
-        # duration = speech_analysis.get("duration_seconds") or 0.0
-        # if duration > MAX_RECORDING_SECONDS + 0.25:
-        #     raise HTTPException(
-        #         status_code=422,
-        #         detail=f"Audio must be {MAX_RECORDING_SECONDS} seconds or less.",
-        #     )
+        duration = 0.0 # speech_analysis.get("duration_seconds") or 0.0
+        if duration > MAX_RECORDING_SECONDS + 0.25:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Audio must be {MAX_RECORDING_SECONDS} seconds or less.",
+            )
 
         artwork_id, artwork_url, visual_parameters = render_svg(
             acoustic_features,
