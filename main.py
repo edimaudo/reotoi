@@ -231,7 +231,7 @@ async def generate_voice_art(
                 "theme": resolved_theme,
                 "input_source": validated_source,
                 "voice_dna": voice_dna,
-                "transcript": speech_analysis.get("transcript"),
+                #"transcript": speech_analysis.get("transcript"),
                 "artwork_url": artwork_url,
                 "visual_parameters": visual_parameters,
             }
