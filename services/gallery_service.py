@@ -1,7 +1,6 @@
 """Gallery persistence.
 
-Local development uses the filesystem. Vercel deployments use Vercel Blob so
-saved artwork is not tied to an ephemeral function filesystem.
+Local development uses the filesystem. 
 """
 
 from __future__ import annotations
