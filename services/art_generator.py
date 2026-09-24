@@ -7,7 +7,6 @@ reproducible artwork for a resolved theme.
 """
 
 from __future__ import annotations
-
 import html
 import json
 import math
@@ -21,37 +20,55 @@ ART_SIZE = CANVAS_SIZE - (ART_MARGIN * 2)
 
 THEMES = {
     "abstract": {
-        "background": "#0f1720",
-        "strokes": ["#f3efe5", "#8fb8a8", "#d6a85d"],
-        "accent": "#f3efe5",
+        "backgrounds": ["#0f1720", "#151922", "#1b1b20", "#20242a"],
+        "strokes": ["#f3efe5", "#8fb8a8", "#d6a85d", "#b9c7d4", "#d8b4a0"],
+        "accents": ["#f3efe5", "#d6a85d", "#b9c7d4"],
     },
     "nature": {
-        "background": "#102018",
-        "strokes": ["#c8d7bd", "#82a878", "#d2b48c"],
-        "accent": "#d2b48c",
+        "backgrounds": ["#102018", "#14251d", "#1b261e", "#20281f"],
+        "strokes": ["#c8d7bd", "#82a878", "#d2b48c", "#a9c4a0", "#d9c9a8"],
+        "accents": ["#d2b48c", "#c8d7bd", "#a9c4a0"],
     },
     "cosmos": {
-        "background": "#11101f",
-        "strokes": ["#d9d2ff", "#8e9be8", "#e5bd78"],
-        "accent": "#d9d2ff",
+        "backgrounds": ["#11101f", "#17152a", "#1c1930", "#121625"],
+        "strokes": ["#d9d2ff", "#8e9be8", "#e5bd78", "#b9b4e8", "#c8d7f0"],
+        "accents": ["#d9d2ff", "#e5bd78", "#c8d7f0"],
     },
     "architecture": {
-        "background": "#161616",
-        "strokes": ["#e8e2d6", "#9ca6b4", "#c79559"],
-        "accent": "#e8e2d6",
+        "backgrounds": ["#161616", "#1c1c1c", "#202020", "#171a1d"],
+        "strokes": ["#e8e2d6", "#9ca6b4", "#c79559", "#c8c5bd", "#b4bec8"],
+        "accents": ["#e8e2d6", "#c79559", "#b4bec8"],
     },
     "organic": {
-        "background": "#191915",
-        "strokes": ["#d9d0b8", "#a8b58e", "#cf9d77"],
-        "accent": "#d9d0b8",
+        "backgrounds": ["#191915", "#202018", "#24221b", "#1b1d19"],
+        "strokes": ["#d9d0b8", "#a8b58e", "#cf9d77", "#c5c9a8", "#d8bda5"],
+        "accents": ["#d9d0b8", "#cf9d77", "#c5c9a8"],
     },
     "geometric": {
-        "background": "#10171b",
-        "strokes": ["#e6e7e3", "#7aa3ad", "#d29a62"],
-        "accent": "#e6e7e3",
+        "backgrounds": ["#10171b", "#151d21", "#192126", "#11191e"],
+        "strokes": ["#e6e7e3", "#7aa3ad", "#d29a62", "#b9cbd0", "#d4c5b2"],
+        "accents": ["#e6e7e3", "#d29a62", "#b9cbd0"],
     },
 }
 
+def build_palette(theme: str, rng: random.Random) -> dict:
+    """Create a deterministic randomized palette for the resolved theme."""
+    theme_palette = THEMES[theme]
+
+    background = rng.choice(theme_palette["backgrounds"])
+
+    strokes = rng.sample(
+        theme_palette["strokes"],
+        k=min(3, len(theme_palette["strokes"])),
+    )
+
+    accent = rng.choice(theme_palette["accents"])
+
+    return {
+        "background": background,
+        "strokes": strokes,
+        "accent": accent,
+    }
 
 def choose_theme(theme: str) -> str:
     """Resolve ``surprise`` to one supported theme."""
@@ -409,24 +426,65 @@ def render_svg(
     artwork_id = artwork_id or str(uuid.uuid4())
     params = build_visual_parameters(features, theme)
     resolved_theme = params["theme"]
-    palette = THEMES[resolved_theme]
 
     seed = int(artwork_id.replace("-", "")[:12], 16)
     rng = random.Random(seed)
 
+    palette = build_palette(resolved_theme, rng)
+    # palette = THEMES[resolved_theme]
+
+    # seed = int(artwork_id.replace("-", "")[:12], 16)
+    # rng = random.Random(seed)
+    metadata = {
+        "artwork_id": artwork_id,
+        **params,
+        "palette": palette,
+    }
+
     parts = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{CANVAS_SIZE}" height="{CANVAS_SIZE}" '
         f'viewBox="0 0 {CANVAS_SIZE} {CANVAS_SIZE}" preserveAspectRatio="xMidYMid meet" role="img">',
+
         f'<title>{html.escape("reotoi voice artwork · " + resolved_theme)}</title>',
-        f'<metadata id="reotoi-metadata">{html.escape(json.dumps({"artwork_id": artwork_id, **params}))}</metadata>',
+
+        f'<metadata id="reotoi-metadata">{html.escape(json.dumps(metadata))}</metadata>',
+
         "<defs>",
-        f'<clipPath id="art-bounds"><rect x="{ART_MARGIN}" y="{ART_MARGIN}" width="{ART_SIZE}" height="{ART_SIZE}" rx="24"/></clipPath>',
+
+        f'<clipPath id="art-bounds">'
+        f'<rect x="{ART_MARGIN}" y="{ART_MARGIN}" '
+        f'width="{ART_SIZE}" height="{ART_SIZE}" rx="24"/>'
+        f'</clipPath>',
+
         "</defs>",
-        f'<rect width="{CANVAS_SIZE}" height="{CANVAS_SIZE}" fill="{palette["background"]}"/>',
-        f'<rect x="{ART_MARGIN}" y="{ART_MARGIN}" width="{ART_SIZE}" height="{ART_SIZE}" rx="24" '
-        f'fill="{palette["background"]}" stroke="{palette["strokes"][1]}" stroke-width="1" opacity="0.9"/>',
+
+        # Full canvas background
+        f'<rect width="{CANVAS_SIZE}" height="{CANVAS_SIZE}" '
+        f'fill="{palette["background"]}"/>',
+
+        # Inner artboard background and border
+        f'<rect x="{ART_MARGIN}" y="{ART_MARGIN}" '
+        f'width="{ART_SIZE}" height="{ART_SIZE}" rx="24" '
+        f'fill="{palette["background"]}" '
+        f'stroke="{palette["strokes"][1]}" '
+        f'stroke-width="1" opacity="0.9"/>',
+
+        # Clip all generated artwork to the inner artboard
         '<g clip-path="url(#art-bounds)">',
     ]
+    # parts = [
+    #     f'<svg xmlns="http://www.w3.org/2000/svg" width="{CANVAS_SIZE}" height="{CANVAS_SIZE}" '
+    #     f'viewBox="0 0 {CANVAS_SIZE} {CANVAS_SIZE}" preserveAspectRatio="xMidYMid meet" role="img">',
+    #     f'<title>{html.escape("reotoi voice artwork · " + resolved_theme)}</title>',
+    #     f'<metadata id="reotoi-metadata">{html.escape(json.dumps({"artwork_id": artwork_id, **params}))}</metadata>',
+    #     "<defs>",
+    #     f'<clipPath id="art-bounds"><rect x="{ART_MARGIN}" y="{ART_MARGIN}" width="{ART_SIZE}" height="{ART_SIZE}" rx="24"/></clipPath>',
+    #     "</defs>",
+    #     f'<rect width="{CANVAS_SIZE}" height="{CANVAS_SIZE}" fill="{palette["background"]}"/>',
+    #     f'<rect x="{ART_MARGIN}" y="{ART_MARGIN}" width="{ART_SIZE}" height="{ART_SIZE}" rx="24" '
+    #     f'fill="{palette["background"]}" stroke="{palette["strokes"][1]}" stroke-width="1" opacity="0.9"/>',
+    #     '<g clip-path="url(#art-bounds)">',
+    # ]
 
     renderers = {
         "abstract": _add_abstract,
