@@ -2,7 +2,6 @@
 
 ## Overview
 Turn your voice into visual art.
-The name comes from the Māori language: reo & toi which means voice art.
 
 ## Project Structure
 ```
@@ -28,8 +27,8 @@ reotoi/
 │
 ├── services/
 │   ├── __init__.py
-│   ├── assemblyai_service.py
 │   ├── voice_features.py
 │   ├── art_generator.py
 │   └── gallery_service.py
 ```
+The name comes from the Māori language: reo & toi which means voice art.
