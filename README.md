@@ -30,6 +30,7 @@ reotoi/
 │   ├── __init__.py
 │   ├── voice_features.py
 │   ├── art_generator.py
+│   ├── audio_conversion.py
 │   └── gallery_service.py
 ```
 
