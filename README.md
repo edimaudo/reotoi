@@ -13,6 +13,8 @@ reotoi/
 ├── vercel.json
 │
 ├── templates/
+│   ├── 404.html
+│   ├── 500.html
 │   ├── base.html
 │   ├── index.html
 │   ├── app.html
