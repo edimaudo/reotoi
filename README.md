@@ -2,6 +2,7 @@
 
 ## Overview
 Turn your voice into visual art.
+The name *reotoi* comes from the Māori language: reo & toi which means voice art.
 
 ## Project Structure
 ```
@@ -31,4 +32,4 @@ reotoi/
 │   ├── art_generator.py
 │   └── gallery_service.py
 ```
-The name comes from the Māori language: reo & toi which means voice art.
+
