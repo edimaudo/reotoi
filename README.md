@@ -2,7 +2,8 @@
 
 ## Overview
 Turn your voice into visual art.
-The name *reotoi* comes from the Māori language: reo & toi which means voice art.
+
+*The name **reotoi** comes from the Māori language: reo & toi which means voice art.*
 
 ## Project Structure
 ```
